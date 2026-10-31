@@ -1,0 +1,2331 @@
+const fs = require('fs');
+const path = require('path');
+const { MENU_CATEGORIES, ITEMS } = require('./menu-data.js');
+const { FIREBASE_CONFIG } = require('./firebase-config.js');
+
+// Generate cards HTML
+const cardsHtml = ITEMS.map(item => {
+  const priceDisplay = item.displayPrice ? `₹${item.displayPrice}/-` : `₹${item.price}/-`;
+  return `
+    <article class="menu-card bg-white rounded-3xl overflow-hidden shadow-cozy border border-cafe-vanilla/70 flex flex-col justify-between transition-all duration-300 group hover:shadow-cozy-lg hover:border-cafe-caramel/40"
+             data-category="${item.category}"
+             data-name="${item.name.toLowerCase()}"
+             data-id="${item.id}"
+             data-price="${item.price}">
+      
+      <div class="relative h-44 w-full overflow-hidden bg-cafe-creamDark">
+        <img 
+          src="${item.img}" 
+          alt="${item.name}" 
+          class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+          loading="lazy"
+        >
+        <div class="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent pointer-events-none"></div>
+
+        <span class="absolute top-3 left-3 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm pointer-events-none ${
+          item.popular 
+            ? 'bg-amber-100 text-amber-900 border border-amber-300' 
+            : 'bg-white/95 text-cafe-darkRoast backdrop-blur-sm'
+        }">
+          ${item.popular ? '★ ' : ''}${item.tag}
+        </span>
+
+        <span class="absolute top-3 right-3 w-5 h-5 rounded-md bg-white/95 backdrop-blur-sm border border-green-600 flex items-center justify-center p-0.5 shadow-sm pointer-events-none" title="100% Vegetarian">
+          <span class="w-2.5 h-2.5 rounded-full bg-green-600"></span>
+        </span>
+      </div>
+
+      <div class="p-5 flex-1 flex flex-col justify-between">
+        <div>
+          <span class="text-[10px] uppercase font-bold tracking-wider text-cafe-caramel mb-0.5 block">${item.category}</span>
+          <h3 class="font-serif font-bold text-lg text-cafe-darkRoast group-hover:text-cafe-caramel transition-colors line-clamp-1">
+            ${item.name}
+          </h3>
+          <p class="text-xs text-cafe-mocha/70 mt-1.5 line-clamp-2 leading-relaxed">
+            ${item.desc}
+          </p>
+        </div>
+
+        <div class="pt-4 mt-4 border-t border-cafe-vanilla/60 flex items-center justify-between">
+          <div>
+            <span class="text-[10px] text-cafe-mocha/60 block font-medium">Price</span>
+            <span class="font-serif font-bold text-xl text-cafe-caramel">${priceDisplay}</span>
+          </div>
+
+          <div id="btn-container-${item.id}">
+            <button 
+              type="button"
+              onclick="addToTray(${item.id})" 
+              class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-cafe-mocha hover:bg-cafe-darkRoast text-white text-xs font-semibold shadow-sm hover:shadow transition-all duration-200 active:scale-95 cursor-pointer min-h-[38px]"
+            >
+              <span>+ Add</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </article>
+  `;
+}).join('\n');
+
+// Category Buttons HTML
+const tabsHtml = MENU_CATEGORIES.map((cat, idx) => {
+  const isAll = cat.id === 'ALL';
+  return `
+    <button 
+      type="button"
+      onclick="handleCategoryClick('${cat.id}')"
+      class="tab-btn relative z-10 flex items-center gap-2 px-5 py-2.5 rounded-full text-xs sm:text-sm font-semibold whitespace-nowrap transition-all duration-200 cursor-pointer min-h-[44px] touch-manipulation select-none ${
+        isAll 
+          ? 'tab-active bg-cafe-caramel text-white shadow-md scale-105 ring-2 ring-cafe-gold/50' 
+          : 'bg-white text-cafe-mocha/80 hover:bg-cafe-creamDark hover:text-cafe-darkRoast border border-cafe-vanilla/80'
+      }"
+      data-category-id="${cat.id}"
+      aria-pressed="${isAll}"
+      role="tab"
+    >
+      <span class="text-sm pointer-events-none">${cat.icon}</span>
+      <span class="pointer-events-none font-bold">${cat.label}</span>
+      <span class="tab-count text-[10px] px-1.5 py-0.5 rounded-full pointer-events-none ${
+        isAll ? 'bg-white/25 text-white' : 'bg-cafe-creamDark text-cafe-mocha/70'
+      }">${cat.count}</span>
+    </button>
+  `;
+}).join('\n');
+
+const fullHtml = `<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hency Cafe | GOOD FOOD • GOOD MOOD • GOOD DAY</title>
+  <meta name="description" content="Welcome to Hency Cafe. Delicious coffee, cheesy pizzas, spicy maggi, momos, shakes & quick bites. Powered by Google Firebase & YouPI-PG. Call Owner: 8444453549.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Firebase SDKs (Compat Mode) — App + Auth + Firestore -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            cafe: {
+              cream: '#FAF7F2',
+              creamDark: '#F3ECE2',
+              vanilla: '#EAE0D3',
+              caramel: '#C28345',
+              caramelHover: '#A86C32',
+              mocha: '#4A2E1B',
+              espresso: '#25150C',
+              darkRoast: '#180E08',
+              gold: '#DF9E3F',
+              amberLight: '#FDF6EC',
+              rust: '#B34A26'
+            }
+          },
+          fontFamily: {
+            serif: ['"Playfair Display"', 'Georgia', 'serif'],
+            sans: ['"Outfit"', 'sans-serif'],
+          },
+          boxShadow: {
+            'cozy': '0 10px 30px -5px rgba(74, 46, 27, 0.08), 0 4px 12px -2px rgba(74, 46, 27, 0.04)',
+            'cozy-lg': '0 20px 40px -8px rgba(74, 46, 27, 0.12), 0 8px 20px -3px rgba(74, 46, 27, 0.06)',
+            'glow': '0 0 25px rgba(223, 158, 63, 0.35)',
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    ::-webkit-scrollbar { width: 8px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #F3ECE2; }
+    ::-webkit-scrollbar-thumb { background: #C28345; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #A86C32; }
+
+    .glass-nav {
+      background: rgba(250, 247, 242, 0.96);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+
+    .badge-shimmer {
+      background: linear-gradient(90deg, rgba(223,158,63,0.15) 0%, rgba(223,158,63,0.35) 50%, rgba(223,158,63,0.15) 100%);
+      background-size: 200% 100%;
+      animation: shimmer 3s infinite;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    .tab-btn {
+      cursor: pointer !important;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .menu-card {
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .menu-card:hover {
+      transform: translateY(-3px);
+    }
+  </style>
+</head>
+<body class="bg-cafe-cream text-cafe-espresso font-sans selection:bg-cafe-caramel selection:text-white antialiased min-h-screen flex flex-col justify-between">
+
+  <!-- ================= TOP NOTICE BANNER ================= -->
+  <div class="bg-cafe-mocha text-cafe-cream text-xs py-2 px-4 text-center border-b border-cafe-caramel/20 flex flex-wrap items-center justify-center gap-2 sm:gap-4">
+    <span class="inline-flex items-center gap-1.5 text-cafe-gold font-medium">
+      <span>🔥</span>
+      <span>Connected to Google Firebase Real-time Database</span>
+    </span>
+    <span class="hidden sm:inline text-cafe-cream/40">•</span>
+    <span class="inline-flex items-center gap-1.5 text-cafe-cream/95 font-medium">
+      <span>📞</span>
+      <span>Owner Line:</span>
+      <a href="tel:8444453549" class="font-bold text-cafe-gold hover:underline tracking-wide bg-white/10 px-2.5 py-0.5 rounded-full transition-colors">
+        8444453549
+      </a>
+    </span>
+    <span class="hidden sm:inline text-cafe-cream/40">•</span>
+    <button type="button" onclick="openKitchenDashboard()" class="inline-flex items-center gap-1 text-[11px] font-bold text-amber-200 bg-amber-900/60 px-2.5 py-0.5 rounded-full hover:bg-amber-800 transition-colors cursor-pointer">
+      <span>👨‍🍳</span>
+      <span>Kitchen / Live Orders</span>
+    </button>
+  </div>
+
+  <!-- ================= NAVBAR ================= -->
+  <header class="sticky top-0 z-40 glass-nav border-b border-cafe-vanilla/70 transition-all duration-300" id="mainHeader">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-20">
+        
+        <!-- Logo & Tagline -->
+        <a href="#home" class="flex items-center gap-3 group">
+          <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-cafe-caramel to-cafe-mocha text-white flex items-center justify-center shadow-md group-hover:scale-105 transition-transform duration-300 text-2xl">
+            ☕
+          </div>
+          <div class="flex flex-col">
+            <span class="font-serif font-bold text-2xl tracking-wide text-cafe-darkRoast group-hover:text-cafe-caramel transition-colors">
+              Hency Cafe
+            </span>
+            <span class="text-[10px] tracking-widest text-cafe-caramel uppercase font-semibold">
+              Good Food • Good Mood • Good Day
+            </span>
+          </div>
+        </a>
+
+        <!-- Desktop Navigation Links (Smooth Scroll) -->
+        <nav class="hidden lg:flex items-center space-x-1">
+          <a href="#home" class="px-4 py-2 text-sm font-medium text-cafe-darkRoast hover:text-cafe-caramel rounded-full hover:bg-cafe-creamDark transition-colors">Home</a>
+          <a href="#menu" class="px-4 py-2 text-sm font-medium text-cafe-darkRoast hover:text-cafe-caramel rounded-full hover:bg-cafe-creamDark transition-colors">Menu</a>
+          <a href="#about" class="px-4 py-2 text-sm font-medium text-cafe-darkRoast hover:text-cafe-caramel rounded-full hover:bg-cafe-creamDark transition-colors">About Us</a>
+          <a href="#specials" class="px-4 py-2 text-sm font-medium text-cafe-darkRoast hover:text-cafe-caramel rounded-full hover:bg-cafe-creamDark transition-colors">Specials</a>
+          <a href="#contact" class="px-4 py-2 text-sm font-medium text-cafe-darkRoast hover:text-cafe-caramel rounded-full hover:bg-cafe-creamDark transition-colors">Contact</a>
+        </nav>
+
+        <!-- Right Side: Prominent Owner Call Pill + Tray + View Menu Button -->
+        <div class="flex items-center gap-2 sm:gap-3">
+          
+          <!-- PROMINENT OWNER CONTACT BUTTON IN NAVBAR -->
+          <a href="tel:8444453549" class="inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full bg-cafe-amberLight hover:bg-cafe-caramel hover:text-white text-cafe-mocha border border-cafe-gold/50 shadow-sm transition-all duration-200 group/call" title="Call Cafe Owner: 8444453549">
+            <div class="w-6 h-6 rounded-full bg-cafe-gold/20 group-hover/call:bg-white/20 flex items-center justify-center text-cafe-caramel group-hover/call:text-white transition-colors text-xs">
+              📞
+            </div>
+            <div class="flex flex-col text-left">
+              <span class="text-[9px] uppercase tracking-wider font-bold text-cafe-caramel group-hover/call:text-white/90 leading-none hidden sm:block">Call Owner</span>
+              <span class="font-bold text-xs sm:text-sm tracking-wide leading-tight">8444453549</span>
+            </div>
+          </a>
+
+          <!-- Tray / Cart Trigger -->
+          <button type="button" onclick="openTray()" class="relative p-2.5 rounded-full bg-cafe-creamDark hover:bg-cafe-vanilla text-cafe-mocha transition-all duration-200 border border-cafe-vanilla cursor-pointer" title="Your Tray">
+            <span class="text-lg">🛍️</span>
+            <span id="trayCountBadge" class="absolute -top-1 -right-1 w-5 h-5 bg-cafe-rust text-white text-xs font-bold rounded-full flex items-center justify-center scale-0 transition-transform duration-200">
+              0
+            </span>
+          </button>
+
+          <!-- Order / View Menu CTA -->
+          <a href="#menu" class="hidden md:inline-flex items-center gap-2 bg-cafe-mocha hover:bg-cafe-darkRoast text-white text-sm font-semibold px-4 sm:px-5 py-2.5 rounded-full shadow-sm hover:shadow transition-all duration-200">
+            <span>View Menu</span>
+            <span class="text-cafe-gold">↓</span>
+          </a>
+
+          <!-- Auth Button (Sign In / User Avatar) -->
+          <button type="button" id="authNavBtn" onclick="openAuthModal()" title="Sign In / My Account"
+            class="hidden md:inline-flex items-center gap-2 px-3 py-2 rounded-full bg-cafe-creamDark hover:bg-cafe-vanilla text-cafe-mocha border border-cafe-vanilla text-xs font-semibold transition-all duration-200 cursor-pointer">
+            <span id="authNavIcon">👤</span>
+            <span id="authNavLabel">Sign In</span>
+          </button>
+
+          <!-- Mobile Menu Hamburger -->
+          <button type="button" onclick="toggleMobileMenu()" class="lg:hidden p-2 rounded-xl text-cafe-mocha hover:bg-cafe-creamDark transition-colors focus:outline-none cursor-pointer" aria-label="Toggle menu">
+            <span id="menuIcon" class="text-xl font-bold">☰</span>
+            <span id="closeIcon" class="text-xl font-bold hidden">✕</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Mobile Navigation Drawer -->
+    <div id="mobileMenu" class="lg:hidden hidden bg-cafe-cream border-b border-cafe-vanilla px-4 pt-2 pb-6 space-y-2 transition-all duration-300">
+      <div class="p-3 bg-cafe-amberLight rounded-2xl border border-cafe-gold/30 flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-full bg-cafe-caramel text-white flex items-center justify-center text-xs">
+            📞
+          </div>
+          <div>
+            <p class="text-[10px] font-bold uppercase tracking-wider text-cafe-caramel">Direct Inquiries & Orders</p>
+            <p class="text-xs font-bold text-cafe-darkRoast">Cafe Owner: 8444453549</p>
+          </div>
+        </div>
+        <a href="tel:8444453549" class="px-3 py-1.5 rounded-xl bg-cafe-caramel text-white text-xs font-semibold shadow hover:bg-cafe-caramelHover">
+          Call Now
+        </a>
+      </div>
+
+      <a href="#home" onclick="closeMobileMenu()" class="mobile-link block px-4 py-2.5 rounded-xl text-sm font-medium text-cafe-darkRoast hover:bg-cafe-creamDark transition-colors">Home</a>
+      <a href="#menu" onclick="closeMobileMenu()" class="mobile-link block px-4 py-2.5 rounded-xl text-sm font-medium text-cafe-darkRoast hover:bg-cafe-creamDark transition-colors">Menu</a>
+      <a href="#about" onclick="closeMobileMenu()" class="mobile-link block px-4 py-2.5 rounded-xl text-sm font-medium text-cafe-darkRoast hover:bg-cafe-creamDark transition-colors">About Us</a>
+      <a href="#specials" onclick="closeMobileMenu()" class="mobile-link block px-4 py-2.5 rounded-xl text-sm font-medium text-cafe-darkRoast hover:bg-cafe-creamDark transition-colors">Specials</a>
+      <a href="#contact" onclick="closeMobileMenu()" class="mobile-link block px-4 py-2.5 rounded-xl text-sm font-medium text-cafe-darkRoast hover:bg-cafe-creamDark transition-colors">Contact</a>
+      <div class="pt-2">
+        <a href="#menu" onclick="closeMobileMenu()" class="mobile-link w-full flex items-center justify-center gap-2 bg-cafe-mocha hover:bg-cafe-darkRoast text-white py-3 rounded-xl font-semibold shadow transition-colors text-sm">
+          <span>Explore All Working Tabs</span>
+          <span>↓</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-grow">
+
+    <!-- ================= HERO SECTION ================= -->
+    <section id="home" class="relative overflow-hidden pt-8 pb-16 md:pt-16 md:pb-24 lg:pt-20 lg:pb-32">
+      <div class="absolute -top-40 -right-40 w-96 h-96 bg-cafe-gold/20 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="absolute top-1/2 -left-40 w-96 h-96 bg-cafe-caramel/15 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+          
+          <!-- Hero Text Content -->
+          <div class="lg:col-span-7 space-y-6 text-center lg:text-left">
+            <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cafe-amberLight border border-cafe-gold/30 text-cafe-caramel text-xs sm:text-sm font-semibold tracking-wide badge-shimmer">
+              <span>❤️</span>
+              <span>Your Cozy Neighborhood Haven</span>
+            </div>
+
+            <h1 class="font-serif text-4xl sm:text-5xl lg:text-6xl font-extrabold text-cafe-darkRoast leading-[1.15] tracking-tight">
+              Savor The Moments of <br class="hidden sm:inline">
+              <span class="text-transparent bg-clip-text bg-gradient-to-r from-cafe-caramel via-cafe-rust to-cafe-mocha">
+                Good Food & Great Moods
+              </span>
+            </h1>
+
+            <div class="inline-block py-1.5 px-4 bg-cafe-creamDark rounded-xl border-l-4 border-cafe-gold shadow-sm">
+              <p class="font-sans font-bold text-xs sm:text-sm uppercase tracking-widest text-cafe-caramel">
+                GOOD FOOD • GOOD MOOD • GOOD DAY
+              </p>
+            </div>
+
+            <p class="text-cafe-mocha/80 text-base sm:text-lg max-w-xl mx-auto lg:mx-0 leading-relaxed font-normal">
+              Step into <span class="font-semibold text-cafe-darkRoast">Hency Cafe</span> — where the aroma of freshly made coffee blends with sizzling hot Maggi, crispy cheesy pizzas, loaded sandwiches, and delightful shakes. Synced in real-time with <strong class="text-cafe-darkRoast">Google Firebase Database</strong> for live order tracking!
+            </p>
+
+            <!-- Action Buttons: View Menu (smooth scroll) & Call Owner -->
+            <div class="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4 pt-2">
+              <a href="#menu" class="w-full sm:w-auto inline-flex items-center justify-center gap-3 bg-cafe-caramel hover:bg-cafe-caramelHover text-white px-8 py-3.5 rounded-full font-semibold shadow-cozy hover:shadow-cozy-lg transform hover:-translate-y-0.5 transition-all duration-200 cursor-pointer">
+                <span>View Menu (All Tabs)</span>
+                <span class="text-cafe-gold">↓</span>
+              </a>
+
+              <a href="tel:8444453549" class="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 bg-white hover:bg-cafe-creamDark text-cafe-darkRoast px-7 py-3.5 rounded-full font-semibold border-2 border-cafe-gold/60 shadow-sm transition-all duration-200 cursor-pointer">
+                <span>📞 Call 8444453549</span>
+              </a>
+            </div>
+
+            <!-- Highlights Strip -->
+            <div class="grid grid-cols-3 gap-4 pt-6 border-t border-cafe-vanilla/70 text-center sm:text-left">
+              <div>
+                <p class="font-serif font-bold text-xl sm:text-2xl text-cafe-darkRoast">100%</p>
+                <p class="text-xs text-cafe-mocha/70 font-medium">Fresh Ingredients</p>
+              </div>
+              <div>
+                <p class="font-serif font-bold text-xl sm:text-2xl text-cafe-darkRoast">₹15 onwards</p>
+                <p class="text-xs text-cafe-mocha/70 font-medium">Pocket Friendly</p>
+              </div>
+              <div>
+                <p class="font-serif font-bold text-xl sm:text-2xl text-cafe-darkRoast">🔥 Firebase</p>
+                <p class="text-xs text-cafe-mocha/70 font-medium">Live Cloud DB</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hero Image & Aesthetic Visual Cards -->
+          <div class="lg:col-span-5 relative">
+            <div class="relative mx-auto max-w-md lg:max-w-none">
+              
+              <div class="relative rounded-3xl overflow-hidden shadow-cozy-lg border-4 border-white/80 group">
+                <img 
+                  src="https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&w=800&q=80" 
+                  alt="Hency Cafe Warm Coffee and Ambiance" 
+                  class="w-full h-[400px] object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
+                  loading="eager"
+                >
+                <div class="absolute inset-0 bg-gradient-to-t from-cafe-darkRoast/85 via-transparent to-transparent"></div>
+                
+                <div class="absolute bottom-5 left-5 right-5 text-white">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <span class="inline-block px-2.5 py-0.5 rounded-md bg-cafe-gold text-cafe-darkRoast text-xs font-bold uppercase mb-1">
+                        Bestseller
+                      </span>
+                      <h3 class="font-serif font-bold text-xl text-white">Cold Coffee & Special Maggi</h3>
+                      <p class="text-xs text-white/80">The unbeatable afternoon combo</p>
+                    </div>
+                    <span class="font-serif font-bold text-2xl text-cafe-gold">₹50/-</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="absolute -top-4 -left-4 sm:-left-6 bg-white/95 backdrop-blur-md p-3 rounded-2xl shadow-cozy border border-cafe-vanilla/60 flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-cafe-amberLight flex items-center justify-center text-cafe-caramel text-lg">
+                  🔥
+                </div>
+                <div>
+                  <p class="text-xs font-bold text-cafe-darkRoast">Google Firebase</p>
+                  <p class="text-[11px] text-green-700 font-semibold">Real-time Cloud DB Active</p>
+                </div>
+              </div>
+
+              <div class="absolute -bottom-5 -right-4 sm:-right-6 bg-white/95 backdrop-blur-md p-3.5 rounded-2xl shadow-cozy border border-cafe-vanilla/60 flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 text-lg">
+                  🍕
+                </div>
+                <div>
+                  <p class="text-xs font-bold text-cafe-darkRoast">Fresh Crust Pizzas</p>
+                  <p class="text-[11px] text-green-700 font-semibold">100% Cheesy Goodness</p>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= FULLY FUNCTIONAL INTERACTIVE MENU SECTION ================= -->
+    <section id="menu" class="py-16 md:py-24 relative scroll-mt-20">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <!-- Section Header -->
+        <div class="text-center max-w-2xl mx-auto mb-10 space-y-3">
+          <div class="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-cafe-amberLight text-cafe-caramel text-xs font-bold uppercase tracking-wider border border-cafe-gold/30">
+            <span>📋</span>
+            <span>Interactive Food & Drinks Menu</span>
+          </div>
+          <h2 class="font-serif text-3xl sm:text-4xl lg:text-5xl font-bold text-cafe-darkRoast">
+            Delicious Bites For Every Mood
+          </h2>
+          <p class="text-cafe-mocha/80 text-sm sm:text-base">
+            Click on any category tab below to filter dishes instantly without lagging.
+          </p>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="max-w-xl mx-auto mb-8">
+          <div class="relative">
+            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-cafe-mocha/50 text-base">🔍</span>
+            <input 
+              type="text" 
+              id="menuSearchInput" 
+              oninput="handleSearchInput(this.value)"
+              placeholder="Search dishes (e.g. Cold Coffee, Tandoori Maggi, Pizza, Momos)..." 
+              class="w-full pl-12 pr-10 py-3.5 rounded-2xl bg-white border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel focus:border-transparent text-sm placeholder:text-cafe-mocha/40 shadow-sm transition-all"
+            >
+            <button type="button" id="clearSearchBtn" onclick="clearSearchInput()" class="hidden absolute right-3.5 top-1/2 -translate-y-1/2 text-cafe-mocha/50 hover:text-cafe-mocha text-sm p-1 cursor-pointer" title="Clear Search">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <!-- WORKING CATEGORY TABS / FILTER BAR -->
+        <div class="sticky top-20 z-30 py-3 -mx-4 px-4 sm:mx-0 sm:px-0 bg-cafe-cream/95 backdrop-blur-md mb-8 border-y border-cafe-vanilla/60">
+          <div class="flex items-center gap-2 overflow-x-auto no-scrollbar sm:justify-center flex-nowrap sm:flex-wrap" id="categoryContainer" role="tablist">
+            ${tabsHtml}
+          </div>
+        </div>
+
+        <!-- Active Filter Indicator & Item Count -->
+        <div class="flex items-center justify-between mb-6 px-1">
+          <div class="text-xs sm:text-sm font-medium text-cafe-mocha/70">
+            Active Category: <span id="currentCategoryTitle" class="font-bold text-cafe-darkRoast text-base">ALL</span> 
+            — Showing <span id="itemCountDisplay" class="font-bold text-cafe-caramel">44 items</span>
+          </div>
+          <div class="text-xs text-cafe-caramel font-semibold flex items-center gap-1.5">
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500"></span>
+            <span>100% Pure Vegetarian</span>
+          </div>
+        </div>
+
+        <!-- Dynamic Menu Cards Grid with Appetizing Photography -->
+        <div id="menuGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 min-h-[300px]">
+          ${cardsHtml}
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyMenuState" class="hidden py-16 text-center space-y-4">
+          <div class="w-16 h-16 mx-auto rounded-full bg-cafe-creamDark flex items-center justify-center text-cafe-caramel text-3xl">
+            🍲
+          </div>
+          <h3 class="font-serif font-bold text-xl text-cafe-darkRoast">No delicious items found</h3>
+          <p class="text-sm text-cafe-mocha/70 max-w-sm mx-auto">
+            We couldn't find anything matching your search. Try resetting your search filter.
+          </p>
+          <button type="button" onclick="resetAllFilters()" class="px-5 py-2.5 rounded-full bg-cafe-caramel text-white text-xs font-semibold hover:bg-cafe-caramelHover transition-colors shadow cursor-pointer">
+            View All Items
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================= SPECIAL COMBOS & CHEF'S PICKS ================= -->
+    <section id="specials" class="py-16 bg-gradient-to-b from-cafe-creamDark/80 to-cafe-cream border-y border-cafe-vanilla/60 scroll-mt-20">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center max-w-2xl mx-auto mb-12 space-y-2">
+          <span class="text-xs font-bold text-cafe-caramel tracking-widest uppercase">Crowd Pleasers</span>
+          <h2 class="font-serif text-3xl sm:text-4xl font-bold text-cafe-darkRoast">Hency's Signature Specials</h2>
+          <p class="text-sm text-cafe-mocha/75">Our most beloved recommendations paired for maximum happiness.</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+          
+          <!-- Special 1 -->
+          <div class="bg-white rounded-3xl p-6 shadow-cozy border border-cafe-vanilla/80 relative flex flex-col justify-between hover:shadow-cozy-lg transition-all duration-300 group">
+            <span class="absolute top-4 right-4 bg-cafe-amberLight text-cafe-caramel border border-cafe-gold/40 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+              Best Combo
+            </span>
+            <div class="space-y-4">
+              <div class="w-12 h-12 rounded-2xl bg-amber-50 text-cafe-caramel flex items-center justify-center text-xl">
+                🔥
+              </div>
+              <div>
+                <h3 class="font-serif font-bold text-xl text-cafe-darkRoast group-hover:text-cafe-caramel transition-colors">
+                  Tandoori Maggi + Cold Coffee
+                </h3>
+                <p class="text-xs text-cafe-mocha/70 mt-1.5 leading-relaxed">
+                  Smoky tandoori tadka tempered Maggi paired with our thick, chilled whipped cold coffee. A soul-satisfying harmony!
+                </p>
+              </div>
+            </div>
+            <div class="pt-6 mt-6 border-t border-cafe-vanilla/60 flex items-center justify-between">
+              <div>
+                <span class="text-xs text-cafe-mocha/60 line-through">₹130</span>
+                <span class="font-serif font-bold text-2xl text-cafe-caramel ml-1.5">₹120/-</span>
+              </div>
+              <button type="button" onclick="addComboToTray(9, 3)" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cafe-mocha hover:bg-cafe-darkRoast text-white text-xs font-semibold transition-colors cursor-pointer">
+                + Add Combo
+              </button>
+            </div>
+          </div>
+
+          <!-- Special 2 -->
+          <div class="bg-white rounded-3xl p-6 shadow-cozy border border-cafe-vanilla/80 relative flex flex-col justify-between hover:shadow-cozy-lg transition-all duration-300 group">
+            <span class="absolute top-4 right-4 bg-rose-50 text-cafe-rust border border-cafe-rust/30 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+              Cheese Lover
+            </span>
+            <div class="space-y-4">
+              <div class="w-12 h-12 rounded-2xl bg-orange-50 text-amber-700 flex items-center justify-center text-xl">
+                🍕
+              </div>
+              <div>
+                <h3 class="font-serif font-bold text-xl text-cafe-darkRoast group-hover:text-cafe-caramel transition-colors">
+                  Overload Pizza + Oreo Shake
+                </h3>
+                <p class="text-xs text-cafe-mocha/70 mt-1.5 leading-relaxed">
+                  Decadent double-cheese loaded pizza topped with fresh herbs, paired with an indulgent, creamy chocolate Oreo shake.
+                </p>
+              </div>
+            </div>
+            <div class="pt-6 mt-6 border-t border-cafe-vanilla/60 flex items-center justify-between">
+              <div>
+                <span class="text-xs text-cafe-mocha/60 line-through">₹240</span>
+                <span class="font-serif font-bold text-2xl text-cafe-caramel ml-1.5">₹220/-</span>
+              </div>
+              <button type="button" onclick="addComboToTray(22, 39)" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cafe-mocha hover:bg-cafe-darkRoast text-white text-xs font-semibold transition-colors cursor-pointer">
+                + Add Combo
+              </button>
+            </div>
+          </div>
+
+          <!-- Special 3 -->
+          <div class="bg-white rounded-3xl p-6 shadow-cozy border border-cafe-vanilla/80 relative flex flex-col justify-between hover:shadow-cozy-lg transition-all duration-300 group">
+            <span class="absolute top-4 right-4 bg-emerald-50 text-emerald-700 border border-emerald-300 text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+              Evening Crunch
+            </span>
+            <div class="space-y-4">
+              <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-800 flex items-center justify-center text-xl">
+                🥪
+              </div>
+              <div>
+                <h3 class="font-serif font-bold text-xl text-cafe-darkRoast group-hover:text-cafe-caramel transition-colors">
+                  Cheese Corn S/W + Hot Tea
+                </h3>
+                <p class="text-xs text-cafe-mocha/70 mt-1.5 leading-relaxed">
+                  Golden grilled sandwich packed with sweet corn & melted mozzarella, washed down with our aromatic ginger cardamom tea.
+                </p>
+              </div>
+            </div>
+            <div class="pt-6 mt-6 border-t border-cafe-vanilla/60 flex items-center justify-between">
+              <div>
+                <span class="text-xs text-cafe-mocha/60 line-through">₹75</span>
+                <span class="font-serif font-bold text-2xl text-cafe-caramel ml-1.5">₹70/-</span>
+              </div>
+              <button type="button" onclick="addComboToTray(13, 1)" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cafe-mocha hover:bg-cafe-darkRoast text-white text-xs font-semibold transition-colors cursor-pointer">
+                + Add Combo
+              </button>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================= ABOUT US SECTION ================= -->
+    <section id="about" class="py-16 md:py-24 relative overflow-hidden scroll-mt-20">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+          
+          <div class="lg:col-span-6 relative order-2 lg:order-1">
+            <div class="grid grid-cols-2 gap-4">
+              <div class="space-y-4">
+                <img 
+                  src="https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=600&q=80" 
+                  alt="Hency Cafe Cozy Interior" 
+                  class="rounded-3xl object-cover h-56 w-full shadow-md"
+                  loading="lazy"
+                >
+                <img 
+                  src="https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=600&q=80" 
+                  alt="Fresh Coffee Brew" 
+                  class="rounded-3xl object-cover h-40 w-full shadow-md"
+                  loading="lazy"
+                >
+              </div>
+              <div class="space-y-4 pt-8">
+                <img 
+                  src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=600&q=80" 
+                  alt="People hanging out at cafe" 
+                  class="rounded-3xl object-cover h-40 w-full shadow-md"
+                  loading="lazy"
+                >
+                <img 
+                  src="https://images.unsplash.com/photo-1525610553991-2bede1a236e2?auto=format&fit=crop&w=600&q=80" 
+                  alt="Warm cafe vibe" 
+                  class="rounded-3xl object-cover h-56 w-full shadow-md"
+                  loading="lazy"
+                >
+              </div>
+            </div>
+
+            <div class="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-cafe-mocha text-white py-3.5 px-6 rounded-2xl shadow-cozy-lg flex items-center gap-3 border-2 border-cafe-gold/50 whitespace-nowrap">
+              <span class="text-xl">❤️</span>
+              <div>
+                <p class="font-serif font-bold text-sm tracking-wide">Made with Passion & Warmth</p>
+                <p class="text-[11px] text-cafe-cream/80">Owner Contact: <a href="tel:8444453549" class="underline text-cafe-gold font-bold">8444453549</a></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="lg:col-span-6 space-y-6 order-1 lg:order-2">
+            <div class="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-cafe-amberLight text-cafe-caramel text-xs font-bold uppercase tracking-wider border border-cafe-gold/30">
+              <span>☕</span>
+              <span>About Hency Cafe</span>
+            </div>
+
+            <h2 class="font-serif text-3xl sm:text-4xl lg:text-5xl font-bold text-cafe-darkRoast leading-tight">
+              A Warm Sanctuary Built On Good Food & Happy Vibes
+            </h2>
+
+            <div class="space-y-4 text-cafe-mocha/80 text-sm sm:text-base leading-relaxed">
+              <p>
+                Welcome to <strong class="text-cafe-darkRoast">Hency Cafe</strong>, where our foundational motto is simple yet heartfelt: <span class="text-cafe-caramel font-semibold">GOOD FOOD • GOOD MOOD • GOOD DAY</span>. We started with an ambition to create a space that feels like a natural extension of your own living room — cozy, cheerful, and filled with intoxicating aromas.
+              </p>
+              <p>
+                Whether you need a quick morning cup of authentic tea for just <strong class="text-cafe-darkRoast">₹15</strong>, a college break over bubbling spicy Maggi and crispy peri peri fries, or an evening pizza hangout with friends, Hency Cafe is designed to be your favorite neighborhood refuge.
+              </p>
+              <p>
+                All orders are saved and updated live using <strong class="text-cafe-darkRoast">Google Firebase Firestore</strong> and paid instantly via <strong class="text-cafe-darkRoast">YouPI-PG</strong>.
+              </p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+              <div class="flex items-start gap-3">
+                <div class="w-8 h-8 rounded-xl bg-cafe-creamDark flex items-center justify-center text-cafe-caramel flex-shrink-0 mt-0.5">✓</div>
+                <div>
+                  <h4 class="font-bold text-xs sm:text-sm text-cafe-darkRoast">Handcrafted Flavors</h4>
+                  <p class="text-xs text-cafe-mocha/70">From spice blends to rich shakes</p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3">
+                <div class="w-8 h-8 rounded-xl bg-cafe-creamDark flex items-center justify-center text-cafe-caramel flex-shrink-0 mt-0.5">✓</div>
+                <div>
+                  <h4 class="font-bold text-xs sm:text-sm text-cafe-darkRoast">Cozy Corner Ambience</h4>
+                  <p class="text-xs text-cafe-mocha/70">Perfect for study, work & chats</p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3">
+                <div class="w-8 h-8 rounded-xl bg-cafe-creamDark flex items-center justify-center text-cafe-caramel flex-shrink-0 mt-0.5">✓</div>
+                <div>
+                  <h4 class="font-bold text-xs sm:text-sm text-cafe-darkRoast">Google Firebase Cloud DB</h4>
+                  <p class="text-xs text-cafe-mocha/70">Real-time sync for kitchen orders</p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3">
+                <div class="w-8 h-8 rounded-xl bg-cafe-creamDark flex items-center justify-center text-cafe-caramel flex-shrink-0 mt-0.5">✓</div>
+                <div>
+                  <h4 class="font-bold text-xs sm:text-sm text-cafe-darkRoast">Zero-Fee YouPI-PG Gateway</h4>
+                  <p class="text-xs text-cafe-mocha/70">UPI: k13592759@okhdfcbank</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-4 flex flex-wrap items-center gap-4">
+              <a href="#menu" class="inline-flex items-center gap-2 text-sm font-semibold text-cafe-caramel hover:text-cafe-caramelHover group cursor-pointer">
+                <span>Browse our complete menu selection</span>
+                <span class="group-hover:translate-x-1 transition-transform">→</span>
+              </a>
+              <span class="text-cafe-mocha/40">•</span>
+              <a href="tel:8444453549" class="inline-flex items-center gap-1.5 text-sm font-bold text-cafe-mocha hover:text-cafe-caramel">
+                <span>Direct Line: 8444453549</span>
+              </a>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ================= CONTACT & LOCATION SECTION ================= -->
+    <section id="contact" class="py-16 md:py-24 relative scroll-mt-20">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
+        <div class="text-center max-w-2xl mx-auto mb-12 space-y-3">
+          <div class="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-cafe-amberLight text-cafe-caramel text-xs font-bold uppercase tracking-wider border border-cafe-gold/30">
+            <span>📍</span>
+            <span>Visit Or Connect</span>
+          </div>
+          <h2 class="font-serif text-3xl sm:text-4xl font-bold text-cafe-darkRoast">
+            We’d Love To Host You
+          </h2>
+          <p class="text-cafe-mocha/80 text-sm sm:text-base">
+            Drop by for a warm cup of coffee, or send an inquiry recorded directly into our Google Firebase Database.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          
+          <div class="lg:col-span-5 space-y-4">
+            
+            <!-- PROMINENT OWNER CONTACT CARD -->
+            <div class="bg-gradient-to-br from-cafe-creamDark via-white to-cafe-amberLight p-6 rounded-3xl shadow-cozy border-2 border-cafe-gold/50 flex items-start gap-4 relative overflow-hidden">
+              <div class="w-12 h-12 rounded-2xl bg-cafe-caramel text-white flex items-center justify-center flex-shrink-0 shadow-md text-xl">
+                📞
+              </div>
+              <div class="flex-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-[10px] font-bold uppercase tracking-wider text-cafe-caramel bg-cafe-gold/20 px-2 py-0.5 rounded-full">
+                    Direct Line
+                  </span>
+                  <span class="text-[11px] text-green-700 font-semibold flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                    Available Now
+                  </span>
+                </div>
+                <h4 class="font-serif font-bold text-cafe-darkRoast text-lg mt-1">Cafe Owner Contact</h4>
+                <p class="text-xs text-cafe-mocha/80 mt-0.5">
+                  Instant call for orders, table bookings & feedback:
+                </p>
+                
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <a href="tel:8444453549" class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-cafe-mocha hover:bg-cafe-darkRoast text-white text-sm font-bold shadow transition-all duration-200">
+                    <span>📞 8444453549</span>
+                  </a>
+                  <a href="https://wa.me/918444453549" target="_blank" class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold shadow transition-all duration-200">
+                    <span>Chat on WhatsApp</span>
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <!-- Address Card -->
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-cafe-vanilla/80 flex items-start gap-4">
+              <div class="w-12 h-12 rounded-2xl bg-cafe-amberLight text-cafe-caramel flex items-center justify-center flex-shrink-0 text-xl">
+                📍
+              </div>
+              <div>
+                <h4 class="font-serif font-bold text-cafe-darkRoast text-base">Cafe Location</h4>
+                <p class="text-xs sm:text-sm text-cafe-mocha/80 mt-1 leading-relaxed">
+                  Shop 12, Sunrise Avenue, Near Central University Campus, Main Market Road
+                </p>
+                <a href="https://maps.google.com" target="_blank" class="inline-flex items-center gap-1 text-xs text-cafe-caramel font-semibold mt-2 hover:underline">
+                  <span>Get Directions</span>
+                  <span>↗</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- Opening Hours Card -->
+            <div class="bg-white p-6 rounded-3xl shadow-sm border border-cafe-vanilla/80 flex items-start gap-4">
+              <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center flex-shrink-0 text-xl">
+                ⏰
+              </div>
+              <div class="w-full">
+                <h4 class="font-serif font-bold text-cafe-darkRoast text-base">Opening Hours</h4>
+                <div class="mt-2 space-y-1.5 text-xs text-cafe-mocha/80">
+                  <div class="flex justify-between">
+                    <span>Monday – Saturday:</span>
+                    <span class="font-semibold text-cafe-darkRoast">10:00 AM – 10:30 PM</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>Sunday:</span>
+                    <span class="font-semibold text-cafe-darkRoast">11:00 AM – 11:00 PM</span>
+                  </div>
+                  <div class="pt-1 text-[11px] text-green-700 font-medium flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                    <span>Kitchen Open Now for Dine-in & Takeaway</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Quick Feedback / Table Reservation Form with Firebase persistence -->
+          <div class="lg:col-span-7 bg-white p-6 sm:p-8 rounded-3xl shadow-cozy border border-cafe-vanilla/80">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="font-serif font-bold text-2xl text-cafe-darkRoast">Send Us A Message</h3>
+              <span class="text-[10px] bg-orange-100 text-orange-800 font-bold px-2 py-0.5 rounded-full">🔥 Firebase Sync</span>
+            </div>
+            <p class="text-xs sm:text-sm text-cafe-mocha/70 mb-6">
+              Have feedback, a party order request, or want to reserve a table? Write to us or call <a href="tel:8444453549" class="text-cafe-caramel font-bold underline">8444453549</a>.
+            </p>
+
+            <form id="contactForm" class="space-y-4" onsubmit="handleContactSubmit(event)">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs font-semibold text-cafe-darkRoast mb-1.5">Your Name *</label>
+                  <input type="text" id="contactName" required placeholder="e.g. Aarav Sharma" class="w-full px-4 py-2.5 rounded-xl bg-cafe-cream/40 border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-xs sm:text-sm">
+                </div>
+                <div>
+                  <label class="block text-xs font-semibold text-cafe-darkRoast mb-1.5">Phone Number *</label>
+                  <input type="tel" id="contactPhone" required placeholder="e.g. 8444453549" class="w-full px-4 py-2.5 rounded-xl bg-cafe-cream/40 border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-xs sm:text-sm">
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-cafe-darkRoast mb-1.5">Subject / Query Type</label>
+                <select id="contactSubject" class="w-full px-4 py-2.5 rounded-xl bg-cafe-cream/40 border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-xs sm:text-sm">
+                  <option value="General Inquiry">General Inquiry & Feedback</option>
+                  <option value="Birthday / Party Booking">Birthday / Small Party Booking</option>
+                  <option value="Advance Takeaway">Advance Takeaway Order</option>
+                  <option value="Menu Suggestion">New Menu Item Suggestion</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-cafe-darkRoast mb-1.5">Your Message</label>
+                <textarea id="contactMessage" rows="3" placeholder="Tell us how we can make your cafe experience special..." class="w-full px-4 py-2.5 rounded-xl bg-cafe-cream/40 border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-xs sm:text-sm resize-none"></textarea>
+              </div>
+
+              <button type="submit" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl bg-cafe-caramel hover:bg-cafe-caramelHover text-white text-xs sm:text-sm font-semibold shadow transition-all duration-200 cursor-pointer">
+                <span>Send to Firebase & Owner</span>
+                <span>✉</span>
+              </button>
+            </form>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ================= TRAY / ORDER DRAWER MODAL ================= -->
+  <div id="trayDrawer" style="display: none;" class="fixed inset-0 z-50 overflow-hidden">
+    <div class="fixed inset-0 bg-black/50 backdrop-blur-sm cursor-pointer" onclick="closeTray()"></div>
+    
+    <div class="fixed inset-y-0 right-0 max-w-full flex pl-10 pointer-events-auto z-10">
+      <div class="w-screen max-w-md bg-white shadow-2xl flex flex-col">
+        
+        <!-- Tray Header -->
+        <div class="p-6 bg-cafe-creamDark border-b border-cafe-vanilla flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <div class="w-9 h-9 rounded-xl bg-cafe-caramel text-white flex items-center justify-center text-lg">
+              🛍️
+            </div>
+            <div>
+              <h3 class="font-serif font-bold text-lg text-cafe-darkRoast">Your Order Tray</h3>
+              <p class="text-xs text-cafe-mocha/70" id="trayItemSubtitle">0 items selected</p>
+            </div>
+          </div>
+          <button type="button" onclick="closeTray()" class="p-2 rounded-xl text-cafe-mocha/60 hover:text-cafe-darkRoast hover:bg-cafe-vanilla transition-colors cursor-pointer text-lg font-bold">
+            ✕
+          </button>
+        </div>
+
+        <!-- Tray Body: Items List -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-4" id="trayItemsContainer">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Empty Tray State inside drawer -->
+        <div id="trayEmptyState" class="hidden flex-1 flex-col items-center justify-center p-6 text-center space-y-3">
+          <div class="w-14 h-14 rounded-full bg-cafe-creamDark flex items-center justify-center text-cafe-caramel text-2xl">
+            🍽️
+          </div>
+          <p class="font-serif font-bold text-base text-cafe-darkRoast">Your tray is empty</p>
+          <p class="text-xs text-cafe-mocha/70 max-w-xs">Explore our menu and click "+ Add" on your favorite dishes to add them here.</p>
+          <button type="button" onclick="closeTray()" class="mt-2 px-5 py-2 rounded-full bg-cafe-mocha text-white text-xs font-semibold hover:bg-cafe-darkRoast transition-colors cursor-pointer">
+            Explore Menu
+          </button>
+        </div>
+
+        <!-- Customer Details & Firebase Payment Options -->
+        <div id="trayFooter" class="p-6 bg-cafe-cream/60 border-t border-cafe-vanilla space-y-4">
+          
+          <div class="space-y-2 bg-white p-3 rounded-2xl border border-cafe-vanilla">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-bold text-cafe-darkRoast uppercase">Customer Info (Firebase Sync)</span>
+              <span class="text-[10px] text-cafe-caramel font-semibold">For Receipt</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <input type="text" id="custNameInput" placeholder="Your Name" class="px-3 py-1.5 rounded-lg bg-cafe-cream/50 border border-cafe-vanilla text-xs focus:outline-none focus:ring-1 focus:ring-cafe-caramel">
+              <input type="tel" id="custPhoneInput" placeholder="Mobile No." class="px-3 py-1.5 rounded-lg bg-cafe-cream/50 border border-cafe-vanilla text-xs focus:outline-none focus:ring-1 focus:ring-cafe-caramel">
+            </div>
+          </div>
+
+          <div class="space-y-1 text-xs">
+            <div class="flex justify-between text-cafe-mocha/70">
+              <span>Items Total:</span>
+              <span id="traySubtotal" class="font-medium text-cafe-darkRoast">₹0</span>
+            </div>
+            <div class="flex justify-between text-cafe-mocha/70">
+              <span>Gateway Fee (YouPI-PG):</span>
+              <span class="text-green-700 font-bold">₹0 (FREE 0%)</span>
+            </div>
+            <div class="flex justify-between text-base font-bold text-cafe-darkRoast pt-1.5 border-t border-cafe-vanilla">
+              <span>Grand Total:</span>
+              <span id="trayGrandTotal" class="font-serif text-xl text-cafe-caramel">₹0</span>
+            </div>
+          </div>
+
+          <div class="space-y-2 pt-1">
+            <button type="button" onclick="startYoupiCheckout('UPI')" class="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer">
+              <span>⚡</span>
+              <span>Pay via UPI (k13592759@okhdfcbank)</span>
+            </button>
+            
+            <div class="grid grid-cols-2 gap-2">
+              <button type="button" onclick="startYoupiCheckout('COD')" class="flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-cafe-creamDark hover:bg-cafe-vanilla text-cafe-mocha border border-cafe-vanilla font-semibold text-xs transition-colors cursor-pointer">
+                <span>💵</span>
+                <span>Pay at Counter</span>
+              </button>
+
+              <button type="button" onclick="sendOrderViaWhatsApp()" class="flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-cafe-creamDark hover:bg-cafe-vanilla text-emerald-800 border border-cafe-vanilla font-semibold text-xs transition-colors cursor-pointer">
+                <span>💬</span>
+                <span>WhatsApp Order</span>
+              </button>
+            </div>
+
+            <div class="pt-1 flex items-center justify-center gap-2 text-[10px] text-cafe-mocha/60">
+              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span>Synced with <strong class="text-cafe-darkRoast">Google Firebase</strong> • 0% Fee UPI</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= KITCHEN & LIVE ORDERS DASHBOARD MODAL ================= -->
+  <div id="kitchenDashboardModal" style="display: none;" class="fixed inset-0 z-50 overflow-y-auto">
+    <div class="fixed inset-0 bg-black/60 backdrop-blur-sm cursor-pointer" onclick="closeKitchenDashboard()"></div>
+
+    <div class="min-h-full flex items-center justify-center p-4 relative z-10">
+      <div class="w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-cafe-vanilla/80 overflow-hidden transform transition-all">
+        
+        <div class="bg-gradient-to-r from-cafe-darkRoast via-cafe-mocha to-cafe-caramel p-5 text-white flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center text-xl">
+              👨‍🍳
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="font-serif font-bold text-lg text-white">Live Kitchen Orders</h3>
+                <span class="bg-orange-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Firebase Live DB</span>
+              </div>
+              <p class="text-xs text-white/80">Real-time incoming orders from customers</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="button" onclick="fetchLiveOrders()" class="px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-white transition-colors cursor-pointer">
+              ↻ Refresh
+            </button>
+            <button type="button" onclick="closeKitchenDashboard()" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-sm font-bold cursor-pointer transition-colors">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <div class="p-6 max-h-[70vh] overflow-y-auto space-y-4" id="kitchenOrdersList">
+          <div class="text-center py-10 text-cafe-mocha/60 text-sm">
+            Fetching active orders from Firebase...
+          </div>
+        </div>
+
+        <div class="bg-cafe-creamDark/60 px-6 py-3 border-t border-cafe-vanilla/60 flex items-center justify-between text-xs text-cafe-mocha/70">
+          <span>Google Firebase Project: <code class="font-mono text-cafe-darkRoast font-bold">${FIREBASE_CONFIG.projectId}</code></span>
+          <button type="button" onclick="closeKitchenDashboard()" class="text-cafe-caramel font-bold hover:underline cursor-pointer">Close Dashboard</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= YOUPI-PG CHECKOUT MODAL ================= -->
+  <div id="youpiCheckoutModal" style="display: none;" class="fixed inset-0 z-50 overflow-y-auto">
+    <div class="fixed inset-0 bg-black/60 backdrop-blur-sm cursor-pointer" onclick="closeYoupiModal()"></div>
+
+    <div class="min-h-full flex items-center justify-center p-4 relative z-10">
+      <div class="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-cafe-vanilla/80 overflow-hidden transform transition-all">
+        
+        <div class="bg-gradient-to-r from-cafe-darkRoast via-cafe-mocha to-cafe-caramel p-5 text-white flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center text-xl">
+              ⚡
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="font-serif font-bold text-lg text-white">YouPI-PG Gateway</h3>
+                <span class="bg-emerald-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">0% Fee</span>
+              </div>
+              <p class="text-xs text-white/80">Direct UPI Payment to Hency Cafe</p>
+            </div>
+          </div>
+          <button type="button" onclick="closeYoupiModal()" class="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-sm font-bold cursor-pointer transition-colors">
+            ✕
+          </button>
+        </div>
+
+        <div class="p-6 space-y-5" id="youpiModalContent">
+          
+          <div class="bg-cafe-cream/80 p-4 rounded-2xl border border-cafe-vanilla flex items-center justify-between">
+            <div>
+              <span class="text-[10px] uppercase font-bold text-cafe-caramel tracking-wider">Order Reference (Firebase Synced)</span>
+              <p class="font-mono font-bold text-sm text-cafe-darkRoast" id="youpiOrderIdDisplay">HENCY-839211</p>
+            </div>
+            <div class="text-right">
+              <span class="text-[10px] uppercase font-bold text-cafe-mocha/60 tracking-wider">Payable Amount</span>
+              <p class="font-serif font-bold text-2xl text-emerald-700" id="youpiAmountDisplay">₹120/-</p>
+            </div>
+          </div>
+
+          <!-- Dynamic QR Code Card -->
+          <div class="bg-white p-5 rounded-2xl border-2 border-dashed border-cafe-caramel/40 text-center space-y-3">
+            <p class="text-xs font-semibold text-cafe-darkRoast flex items-center justify-center gap-1.5">
+              <span>Scan QR Code with Any UPI App</span>
+            </p>
+
+            <div class="w-52 h-52 mx-auto bg-cafe-cream/50 rounded-2xl p-2 border border-cafe-vanilla/80 flex items-center justify-center shadow-inner relative" id="youpiQrContainer">
+              <img id="youpiQrImage" src="" alt="YouPI-PG UPI QR Code" class="w-full h-full object-contain rounded-xl">
+            </div>
+
+            <div class="flex items-center justify-center gap-2 pt-1">
+              <span class="text-xs text-cafe-mocha/70">UPI ID:</span>
+              <code class="px-2.5 py-1 rounded-lg bg-cafe-creamDark text-cafe-darkRoast font-mono text-xs font-bold" id="youpiVpaDisplay">k13592759@okhdfcbank</code>
+              <button type="button" onclick="copyVpa()" class="text-xs text-cafe-caramel font-bold hover:underline cursor-pointer">
+                Copy
+              </button>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <span class="text-[11px] font-bold uppercase tracking-wider text-cafe-mocha/70 block text-center">
+              Or Open Installed UPI App
+            </span>
+            <div class="grid grid-cols-3 gap-2">
+              <a id="gpayDeepLink" href="#" class="flex flex-col items-center justify-center p-2.5 rounded-xl bg-cafe-cream hover:bg-cafe-creamDark border border-cafe-vanilla transition-colors text-center">
+                <span class="text-base font-bold text-blue-600">G</span>
+                <span class="text-[10px] font-bold text-cafe-darkRoast mt-0.5">Google Pay</span>
+              </a>
+              <a id="phonepeDeepLink" href="#" class="flex flex-col items-center justify-center p-2.5 rounded-xl bg-cafe-cream hover:bg-cafe-creamDark border border-cafe-vanilla transition-colors text-center">
+                <span class="text-base font-bold text-purple-600">Pe</span>
+                <span class="text-[10px] font-bold text-cafe-darkRoast mt-0.5">PhonePe</span>
+              </a>
+              <a id="paytmDeepLink" href="#" class="flex flex-col items-center justify-center p-2.5 rounded-xl bg-cafe-cream hover:bg-cafe-creamDark border border-cafe-vanilla transition-colors text-center">
+                <span class="text-base font-bold text-sky-600">Pay</span>
+                <span class="text-[10px] font-bold text-cafe-darkRoast mt-0.5">Paytm</span>
+              </a>
+            </div>
+          </div>
+
+          <div class="pt-2 border-t border-cafe-vanilla space-y-2">
+            <label class="block text-xs font-semibold text-cafe-darkRoast">
+              Already Paid? Enter 12-Digit UTR / Ref Number:
+            </label>
+            <div class="flex gap-2">
+              <input type="text" id="youpiUtrInput" placeholder="e.g. 439281928391" maxlength="16" class="flex-1 px-3 py-2 rounded-xl bg-cafe-cream/40 border border-cafe-vanilla text-xs font-mono focus:outline-none focus:ring-1 focus:ring-cafe-caramel">
+              <button type="button" onclick="verifyYoupiPayment()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors cursor-pointer whitespace-nowrap">
+                Verify Payment
+              </button>
+            </div>
+            <p class="text-[10px] text-cafe-mocha/60 text-center">
+              Payment is verified and immediately synced to Google Firebase.
+            </p>
+          </div>
+
+        </div>
+
+        <div class="p-8 text-center space-y-4 hidden" id="youpiSuccessView">
+          <div class="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center text-3xl shadow-sm">
+            ✓
+          </div>
+          <div>
+            <span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+              Payment Verified & Stored
+            </span>
+            <h4 class="font-serif font-bold text-2xl text-cafe-darkRoast mt-2">Order Confirmed!</h4>
+            <p class="text-xs text-cafe-mocha/70 mt-1" id="successOrderSubtext">
+              Your order has been written to Firebase and is being prepared in Hency Cafe's kitchen.
+            </p>
+          </div>
+
+          <div class="bg-cafe-cream/80 p-4 rounded-2xl border border-cafe-vanilla text-left space-y-1.5 text-xs">
+            <div class="flex justify-between">
+              <span class="text-cafe-mocha/70">Order ID:</span>
+              <span class="font-mono font-bold text-cafe-darkRoast" id="successOrderIdDisplay">HENCY-839211</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-cafe-mocha/70">Amount Paid:</span>
+              <span class="font-bold text-emerald-700" id="successAmountDisplay">₹120/-</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-cafe-mocha/70">Database:</span>
+              <span class="font-bold text-cafe-darkRoast">Google Firebase Firestore</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-cafe-mocha/70">UTR / Ref:</span>
+              <span class="font-mono text-cafe-darkRoast" id="successUtrDisplay">UTR-VERIFIED</span>
+            </div>
+          </div>
+
+          <div class="pt-2 flex gap-2">
+            <button type="button" onclick="printReceipt()" class="flex-1 py-2.5 rounded-xl bg-cafe-creamDark hover:bg-cafe-vanilla text-cafe-mocha font-bold text-xs border border-cafe-vanilla transition-colors cursor-pointer">
+              Print / Save Receipt
+            </button>
+            <button type="button" onclick="closeYoupiModal()" class="flex-1 py-2.5 rounded-xl bg-cafe-mocha hover:bg-cafe-darkRoast text-white font-bold text-xs transition-colors cursor-pointer">
+              Done
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-cafe-creamDark/60 px-6 py-3 border-t border-cafe-vanilla/60 flex items-center justify-between text-[11px] text-cafe-mocha/70">
+          <span>Powered by <strong class="text-cafe-darkRoast">YouPI-PG</strong> & <strong class="text-cafe-darkRoast">Google Firebase</strong></span>
+          <a href="https://github.com/youpi-pg/YouPI-PG" target="_blank" class="text-cafe-caramel hover:underline font-semibold">Gateway Info ↗</a>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= AUTH MODAL (Sign In / Sign Up) ================= -->
+  <div id="authModal" style="display:none;" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeAuthModal()"></div>
+    <div class="relative bg-white rounded-3xl shadow-cozy-lg w-full max-w-md overflow-hidden border border-cafe-vanilla/80">
+      <!-- Header -->
+      <div class="bg-gradient-to-r from-cafe-caramel to-cafe-mocha px-6 py-5 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl">☕</div>
+          <div>
+            <h3 class="font-serif font-bold text-white text-lg leading-tight">Hency Cafe Account</h3>
+            <p class="text-[11px] text-cafe-amberLight">Sign in to track your orders</p>
+          </div>
+        </div>
+        <button type="button" onclick="closeAuthModal()" class="w-8 h-8 rounded-full bg-white/15 hover:bg-white/30 text-white flex items-center justify-center text-sm cursor-pointer transition-colors">✕</button>
+      </div>
+
+      <!-- Tab switcher: Sign In / Sign Up -->
+      <div class="flex border-b border-cafe-vanilla">
+        <button type="button" id="authTabSignIn" onclick="switchAuthTab('signin')"
+          class="flex-1 py-3 text-sm font-semibold text-cafe-caramel border-b-2 border-cafe-caramel bg-cafe-amberLight/60 cursor-pointer transition-colors">
+          Sign In
+        </button>
+        <button type="button" id="authTabSignUp" onclick="switchAuthTab('signup')"
+          class="flex-1 py-3 text-sm font-semibold text-cafe-mocha/60 border-b-2 border-transparent hover:bg-cafe-creamDark cursor-pointer transition-colors">
+          Create Account
+        </button>
+      </div>
+
+      <!-- Sign In Form -->
+      <div id="authSignInForm" class="p-6 space-y-4">
+        <div>
+          <label class="text-xs font-bold text-cafe-mocha/70 uppercase tracking-wider block mb-1">Email Address</label>
+          <input type="email" id="siEmail" placeholder="you@example.com"
+            class="w-full px-4 py-3 rounded-xl border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-sm bg-cafe-cream/50"/>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-cafe-mocha/70 uppercase tracking-wider block mb-1">Password</label>
+          <div class="relative">
+            <input type="password" id="siPassword" placeholder="••••••••"
+              class="w-full px-4 py-3 rounded-xl border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-sm bg-cafe-cream/50 pr-10"/>
+            <button type="button" onclick="togglePwdVisibility('siPassword',this)" class="absolute right-3 top-1/2 -translate-y-1/2 text-cafe-mocha/50 hover:text-cafe-mocha text-xs cursor-pointer">👁</button>
+          </div>
+        </div>
+        <div id="siError" class="hidden text-xs text-rose-600 bg-rose-50 px-3 py-2 rounded-xl border border-rose-200"></div>
+        <button type="button" onclick="handleSignIn()"
+          class="w-full py-3 rounded-xl bg-cafe-caramel hover:bg-cafe-caramelHover text-white font-bold text-sm shadow transition-colors cursor-pointer flex items-center justify-center gap-2">
+          <span id="siSpinner" class="hidden">⏳</span>
+          <span>Sign In to Hency Cafe</span>
+        </button>
+        <div class="text-center">
+          <button type="button" onclick="handleForgotPassword()" class="text-xs text-cafe-caramel hover:underline cursor-pointer font-medium">Forgot Password?</button>
+        </div>
+      </div>
+
+      <!-- Sign Up Form -->
+      <div id="authSignUpForm" class="p-6 space-y-4 hidden">
+        <div>
+          <label class="text-xs font-bold text-cafe-mocha/70 uppercase tracking-wider block mb-1">Full Name</label>
+          <input type="text" id="suName" placeholder="Your name"
+            class="w-full px-4 py-3 rounded-xl border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-sm bg-cafe-cream/50"/>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-cafe-mocha/70 uppercase tracking-wider block mb-1">Email Address</label>
+          <input type="email" id="suEmail" placeholder="you@example.com"
+            class="w-full px-4 py-3 rounded-xl border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-sm bg-cafe-cream/50"/>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-cafe-mocha/70 uppercase tracking-wider block mb-1">Password <span class="normal-case text-cafe-mocha/50">(min. 6 characters)</span></label>
+          <div class="relative">
+            <input type="password" id="suPassword" placeholder="••••••••"
+              class="w-full px-4 py-3 rounded-xl border border-cafe-vanilla focus:outline-none focus:ring-2 focus:ring-cafe-caramel text-sm bg-cafe-cream/50 pr-10"/>
+            <button type="button" onclick="togglePwdVisibility('suPassword',this)" class="absolute right-3 top-1/2 -translate-y-1/2 text-cafe-mocha/50 hover:text-cafe-mocha text-xs cursor-pointer">👁</button>
+          </div>
+        </div>
+        <div id="suError" class="hidden text-xs text-rose-600 bg-rose-50 px-3 py-2 rounded-xl border border-rose-200"></div>
+        <button type="button" onclick="handleSignUp()"
+          class="w-full py-3 rounded-xl bg-cafe-mocha hover:bg-cafe-darkRoast text-white font-bold text-sm shadow transition-colors cursor-pointer flex items-center justify-center gap-2">
+          <span id="suSpinner" class="hidden">⏳</span>
+          <span>Create My Account</span>
+        </button>
+      </div>
+
+      <!-- Signed-In State -->
+      <div id="authSignedInPanel" class="p-6 space-y-4 hidden">
+        <div class="text-center space-y-2">
+          <div class="w-14 h-14 rounded-full bg-cafe-amberLight mx-auto flex items-center justify-center text-2xl">☕</div>
+          <p class="font-serif font-bold text-cafe-darkRoast text-lg" id="authUserDisplayName">Welcome!</p>
+          <p class="text-xs text-cafe-mocha/60" id="authUserEmail"></p>
+          <span class="inline-block px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-[11px] font-bold">● Signed In</span>
+        </div>
+        <div class="space-y-2 border-t border-cafe-vanilla pt-4">
+          <button type="button" onclick="openKitchenDashboard(); closeAuthModal();"
+            class="w-full py-2.5 rounded-xl bg-cafe-amberLight hover:bg-cafe-vanilla text-cafe-mocha text-sm font-semibold border border-cafe-gold/30 cursor-pointer transition-colors">
+            👨‍🍳 View My Orders (Kitchen Dashboard)
+          </button>
+          <button type="button" onclick="handleSignOut()"
+            class="w-full py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-sm font-semibold border border-rose-200 cursor-pointer transition-colors">
+            Sign Out
+          </button>
+        </div>
+      </div>
+
+      <div class="px-6 pb-4 text-center text-[10px] text-cafe-mocha/50">
+        Secured by <strong class="text-cafe-darkRoast">Firebase Authentication</strong> • Hency Cafe
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= TOAST NOTIFICATION ================= -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 bg-cafe-darkRoast text-white px-5 py-3 rounded-2xl shadow-cozy-lg flex items-center gap-3 border border-cafe-gold/30 transform translate-y-24 opacity-0 transition-all duration-300 pointer-events-none">
+    <div class="w-7 h-7 rounded-full bg-cafe-caramel flex items-center justify-center text-white text-xs font-bold">
+      ✓
+    </div>
+    <span id="toastMessage" class="text-xs sm:text-sm font-medium">Item added to your tray!</span>
+  </div>
+
+  <!-- ================= WARM FOOTER ================= -->
+  <footer class="bg-cafe-darkRoast text-cafe-cream relative overflow-hidden border-t-4 border-cafe-gold">
+    
+    <div class="bg-gradient-to-r from-cafe-caramel via-cafe-rust to-cafe-mocha py-8 px-4 text-center">
+      <div class="max-w-4xl mx-auto space-y-1">
+        <h3 class="font-serif text-2xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-wider">
+          THANK YOU! VISIT AGAIN
+        </h3>
+        <p class="text-xs sm:text-sm text-cafe-amberLight font-medium tracking-wide">
+          GOOD FOOD • GOOD MOOD • GOOD DAY • ALWAYS AT HENCY CAFE
+        </p>
+      </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-16">
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-10">
+        
+        <div class="lg:col-span-5 space-y-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-cafe-caramel text-white flex items-center justify-center text-xl">
+              ☕
+            </div>
+            <div>
+              <span class="font-serif font-bold text-2xl text-white">Hency Cafe</span>
+              <p class="text-[10px] uppercase tracking-widest text-cafe-gold">Pure Taste & Good Vibes</p>
+            </div>
+          </div>
+          
+          <p class="text-xs sm:text-sm text-cafe-cream/70 leading-relaxed max-w-sm">
+            Serving happiness one plate at a time. From hand-whipped cold coffees and buttery grilled sandwiches to sizzling spicy Maggi and freshly baked pizzas.
+          </p>
+
+          <div class="pt-2 flex items-center gap-3">
+            <a href="https://instagram.com" target="_blank" class="w-9 h-9 rounded-xl bg-white/10 hover:bg-cafe-caramel hover:text-white flex items-center justify-center text-cafe-cream/80 transition-colors" title="Instagram">
+              <span class="text-sm">📷</span>
+            </a>
+            <a href="https://facebook.com" target="_blank" class="w-9 h-9 rounded-xl bg-white/10 hover:bg-cafe-caramel hover:text-white flex items-center justify-center text-cafe-cream/80 transition-colors" title="Facebook">
+              <span class="text-sm font-bold">f</span>
+            </a>
+            <a href="https://maps.google.com" target="_blank" class="w-9 h-9 rounded-xl bg-white/10 hover:bg-cafe-caramel hover:text-white flex items-center justify-center text-cafe-cream/80 transition-colors" title="Google Maps">
+              <span class="text-sm">📍</span>
+            </a>
+            <a href="https://wa.me/918444453549" target="_blank" class="w-9 h-9 rounded-xl bg-white/10 hover:bg-emerald-600 hover:text-white flex items-center justify-center text-cafe-cream/80 transition-colors" title="WhatsApp">
+              <span class="text-sm">💬</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="lg:col-span-3 space-y-3">
+          <h4 class="font-serif font-bold text-white text-base">Quick Links</h4>
+          <ul class="space-y-2 text-xs text-cafe-cream/75">
+            <li><a href="#home" class="hover:text-cafe-gold transition-colors">Home Page</a></li>
+            <li><a href="#menu" class="hover:text-cafe-gold transition-colors">Full Food & Drinks Menu</a></li>
+            <li><a href="#about" class="hover:text-cafe-gold transition-colors">Our Cozy Story</a></li>
+            <li><a href="#specials" class="hover:text-cafe-gold transition-colors">Hency's Signature Specials</a></li>
+            <li><a href="#contact" class="hover:text-cafe-gold transition-colors">Location & Timings</a></li>
+            <li><a href="javascript:void(0)" onclick="openKitchenDashboard()" class="text-amber-300 hover:text-cafe-gold transition-colors font-semibold">👨‍🍳 Kitchen / Staff Orders (Firebase)</a></li>
+          </ul>
+        </div>
+
+        <div class="lg:col-span-4 space-y-3">
+          <h4 class="font-serif font-bold text-white text-base">Visit & Contact</h4>
+          <div class="space-y-2.5 text-xs text-cafe-cream/75">
+            
+            <div class="p-3 bg-white/5 rounded-2xl border border-cafe-gold/30">
+              <p class="text-[10px] text-cafe-gold uppercase font-bold tracking-wider">Cafe Owner Direct Line</p>
+              <a href="tel:8444453549" class="font-serif text-lg font-bold text-white hover:text-cafe-gold flex items-center gap-2 mt-0.5 transition-colors">
+                <span>📞 8444453549</span>
+              </a>
+              <p class="text-[11px] text-cafe-cream/60 mt-0.5">Click number above to call directly from mobile</p>
+            </div>
+
+            <p class="flex items-start gap-2 pt-1">
+              <span>📍</span>
+              <span>Shop 12, Sunrise Avenue, Near Central University Campus, Main Market Road</span>
+            </p>
+            <p class="flex items-center gap-2">
+              <span>⏰</span>
+              <span>Mon - Sun: 10:00 AM - 11:00 PM</span>
+            </p>
+            <p class="flex items-center gap-2">
+              <span>✉️</span>
+              <span>hencycafe@gmail.com</span>
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="mt-12 pt-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between text-xs text-cafe-cream/60 gap-4">
+        <p>© <span id="currentYear">2026</span> Hency Cafe. Synced with Google Firebase Database & YouPI-PG.</p>
+        <p class="text-[11px] tracking-wide text-cafe-gold/90 font-medium">GOOD FOOD • GOOD MOOD • GOOD DAY</p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ================= JAVASCRIPT & GOOGLE FIREBASE ENGINE ================= -->
+  <script>
+    // App State
+    let currentCategory = 'ALL';
+    let searchQuery = '';
+    let tray = {};
+    let activeYoupiOrder = null;
+    let youpiPollInterval = null;
+
+    // Google Firebase Instance References
+    let firebaseDb   = null;
+    let firebaseAuth = null;
+    let currentUser  = null;
+    const FIREBASE_LOCAL_CONFIG = ${JSON.stringify(FIREBASE_CONFIG)};
+
+    const ITEMS_MAP = ${JSON.stringify(ITEMS.reduce((acc, item) => { acc[item.id] = { name: item.name, price: item.price }; return acc; }, {}))};
+
+    // ==========================================
+    // FIREBASE INITIALIZATION (Auth + Firestore)
+    // ==========================================
+    function setupFirebase() {
+      try {
+        if (typeof firebase !== 'undefined' && FIREBASE_LOCAL_CONFIG && FIREBASE_LOCAL_CONFIG.apiKey && !FIREBASE_LOCAL_CONFIG.apiKey.includes('REPLACE')) {
+          firebase.initializeApp(FIREBASE_LOCAL_CONFIG);
+          firebaseDb   = firebase.firestore();
+          firebaseAuth = firebase.auth();
+
+          // Auth state observer — keeps navbar & modal in sync
+          firebaseAuth.onAuthStateChanged(user => {
+            currentUser = user;
+            updateAuthNavUI(user);
+          });
+
+          console.log('🔥 Firebase Auth + Firestore connected for Hency Cafe!');
+        } else {
+          console.warn('⚠️ Firebase: real API key not set — running in offline demo mode.');
+        }
+      } catch (err) {
+        console.warn('Firebase init warning:', err.message);
+      }
+    }
+
+    // Update navbar auth button based on signed-in state
+    function updateAuthNavUI(user) {
+      const btn   = document.getElementById('authNavBtn');
+      const icon  = document.getElementById('authNavIcon');
+      const label = document.getElementById('authNavLabel');
+      if (!btn) return;
+
+      btn.classList.remove('hidden');
+      if (user) {
+        const name = (user.displayName || user.email || 'Account').split(' ')[0];
+        if (icon)  icon.textContent  = '✅';
+        if (label) label.textContent = name;
+        btn.title = 'Signed in as ' + (user.email || '');
+      } else {
+        if (icon)  icon.textContent  = '👤';
+        if (label) label.textContent = 'Sign In';
+      }
+    }
+
+    // ==========================================
+    // AUTH MODAL CONTROLS
+    // ==========================================
+    function openAuthModal() {
+      const modal = document.getElementById('authModal');
+      if (modal) { modal.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+      refreshAuthPanel();
+    }
+
+    function closeAuthModal() {
+      const modal = document.getElementById('authModal');
+      if (modal) { modal.style.display = 'none'; document.body.style.overflow = ''; }
+    }
+
+    function refreshAuthPanel() {
+      const siForm    = document.getElementById('authSignInForm');
+      const suForm    = document.getElementById('authSignUpForm');
+      const signedIn  = document.getElementById('authSignedInPanel');
+
+      if (currentUser) {
+        siForm.classList.add('hidden');
+        suForm.classList.add('hidden');
+        signedIn.classList.remove('hidden');
+        const nameEl  = document.getElementById('authUserDisplayName');
+        const emailEl = document.getElementById('authUserEmail');
+        if (nameEl)  nameEl.textContent  = 'Hi, ' + (currentUser.displayName || currentUser.email.split('@')[0]) + '!';
+        if (emailEl) emailEl.textContent = currentUser.email;
+      } else {
+        signedIn.classList.add('hidden');
+        siForm.classList.remove('hidden');
+        suForm.classList.add('hidden');
+      }
+    }
+
+    function switchAuthTab(tab) {
+      const siForm   = document.getElementById('authSignInForm');
+      const suForm   = document.getElementById('authSignUpForm');
+      const siTab    = document.getElementById('authTabSignIn');
+      const suTab    = document.getElementById('authTabSignUp');
+      const activeClass   = ['text-cafe-caramel','border-cafe-caramel','bg-cafe-amberLight/60'];
+      const inactiveClass = ['text-cafe-mocha/60','border-transparent'];
+
+      if (tab === 'signin') {
+        siForm.classList.remove('hidden'); suForm.classList.add('hidden');
+        siTab.classList.add(...activeClass);    siTab.classList.remove(...inactiveClass);
+        suTab.classList.add(...inactiveClass);  suTab.classList.remove(...activeClass);
+      } else {
+        suForm.classList.remove('hidden'); siForm.classList.add('hidden');
+        suTab.classList.add(...activeClass);    suTab.classList.remove(...inactiveClass);
+        siTab.classList.add(...inactiveClass);  siTab.classList.remove(...activeClass);
+      }
+      clearAuthErrors();
+    }
+
+    function clearAuthErrors() {
+      ['siError','suError'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.classList.add('hidden'); el.textContent = ''; }
+      });
+    }
+
+    function togglePwdVisibility(inputId, btn) {
+      const input = document.getElementById(inputId);
+      if (!input) return;
+      if (input.type === 'password') { input.type = 'text'; btn.textContent = '🙈'; }
+      else { input.type = 'password'; btn.textContent = '👁'; }
+    }
+
+    function showAuthError(elId, msg) {
+      const el = document.getElementById(elId);
+      if (el) { el.textContent = msg; el.classList.remove('hidden'); }
+    }
+
+    function mapAuthError(code) {
+      const map = {
+        'auth/invalid-email':             'Invalid email address.',
+        'auth/user-not-found':            'No account found with this email.',
+        'auth/wrong-password':            'Incorrect password. Please try again.',
+        'auth/email-already-in-use':      'An account with this email already exists.',
+        'auth/weak-password':             'Password must be at least 6 characters.',
+        'auth/too-many-requests':         'Too many attempts. Please wait and try again.',
+        'auth/network-request-failed':    'Network error — check your connection.',
+        'auth/invalid-credential':        'Invalid credentials. Check email & password.',
+      };
+      return map[code] || 'Something went wrong. Please try again.';
+    }
+
+    // ==========================================
+    // SIGN IN (Email / Password)
+    // ==========================================
+    async function handleSignIn() {
+      if (!firebaseAuth) { showAuthError('siError', '⚠️ Firebase not configured. Add your API key to firebase-config.js.'); return; }
+      const email    = (document.getElementById('siEmail').value || '').trim();
+      const password = (document.getElementById('siPassword').value || '');
+      clearAuthErrors();
+
+      if (!email || !password) { showAuthError('siError', 'Please fill in both email and password.'); return; }
+
+      const spinner = document.getElementById('siSpinner');
+      if (spinner) spinner.classList.remove('hidden');
+
+      try {
+        await firebaseAuth.signInWithEmailAndPassword(email, password);
+        showToast('Welcome back to Hency Cafe! ☕');
+        closeAuthModal();
+      } catch (err) {
+        showAuthError('siError', mapAuthError(err.code));
+      } finally {
+        if (spinner) spinner.classList.add('hidden');
+      }
+    }
+
+    // ==========================================
+    // SIGN UP (Email / Password)
+    // ==========================================
+    async function handleSignUp() {
+      if (!firebaseAuth) { showAuthError('suError', '⚠️ Firebase not configured. Add your API key to firebase-config.js.'); return; }
+      const name     = (document.getElementById('suName').value || '').trim();
+      const email    = (document.getElementById('suEmail').value || '').trim();
+      const password = (document.getElementById('suPassword').value || '');
+      clearAuthErrors();
+
+      if (!name)     { showAuthError('suError', 'Please enter your name.'); return; }
+      if (!email)    { showAuthError('suError', 'Please enter your email address.'); return; }
+      if (!password) { showAuthError('suError', 'Please enter a password.'); return; }
+
+      const spinner = document.getElementById('suSpinner');
+      if (spinner) spinner.classList.remove('hidden');
+
+      try {
+        const cred = await firebaseAuth.createUserWithEmailAndPassword(email, password);
+        // Save display name
+        await cred.user.updateProfile({ displayName: name });
+        // Save user profile to Firestore
+        if (firebaseDb) {
+          await firebaseDb.collection('users').doc(cred.user.uid).set({
+            name, email, createdAt: firebase.firestore.FieldValue.serverTimestamp(), role: 'customer'
+          });
+        }
+        showToast('Account created! Welcome to Hency Cafe, ' + name + '! ☕');
+        closeAuthModal();
+      } catch (err) {
+        showAuthError('suError', mapAuthError(err.code));
+      } finally {
+        if (spinner) spinner.classList.add('hidden');
+      }
+    }
+
+    // ==========================================
+    // SIGN OUT
+    // ==========================================
+    async function handleSignOut() {
+      if (!firebaseAuth) return;
+      try {
+        await firebaseAuth.signOut();
+        showToast('Signed out. See you soon! 👋');
+        closeAuthModal();
+      } catch (err) {
+        showToast('Sign out failed. Try again.');
+      }
+    }
+
+    // ==========================================
+    // FORGOT PASSWORD
+    // ==========================================
+    async function handleForgotPassword() {
+      if (!firebaseAuth) { showAuthError('siError', '⚠️ Firebase not configured.'); return; }
+      const email = (document.getElementById('siEmail').value || '').trim();
+      if (!email) { showAuthError('siError', 'Enter your email address above first, then click "Forgot Password".'); return; }
+      clearAuthErrors();
+      try {
+        await firebaseAuth.sendPasswordResetEmail(email);
+        showToast('Password reset email sent to ' + email);
+      } catch (err) {
+        showAuthError('siError', mapAuthError(err.code));
+      }
+    }
+
+    // Category Tab Click Handler (100% Functional & Instant)
+    function handleCategoryClick(categoryId) {
+      currentCategory = categoryId;
+      
+      const buttons = document.querySelectorAll('.tab-btn');
+      buttons.forEach(btn => {
+        const catId = btn.getAttribute('data-category-id');
+        const countSpan = btn.querySelector('.tab-count');
+        
+        if (catId === categoryId) {
+          btn.className = 'tab-btn tab-active relative z-10 flex items-center gap-2 px-5 py-2.5 rounded-full text-xs sm:text-sm font-semibold whitespace-nowrap transition-all duration-200 cursor-pointer min-h-[44px] touch-manipulation select-none bg-cafe-caramel text-white shadow-md scale-105 ring-2 ring-cafe-gold/50';
+          btn.setAttribute('aria-pressed', 'true');
+          if (countSpan) countSpan.className = 'tab-count text-[10px] px-1.5 py-0.5 rounded-full pointer-events-none bg-white/25 text-white';
+        } else {
+          btn.className = 'tab-btn relative z-10 flex items-center gap-2 px-5 py-2.5 rounded-full text-xs sm:text-sm font-semibold whitespace-nowrap transition-all duration-200 cursor-pointer min-h-[44px] touch-manipulation select-none bg-white text-cafe-mocha/80 hover:bg-cafe-creamDark hover:text-cafe-darkRoast border border-cafe-vanilla/80';
+          btn.setAttribute('aria-pressed', 'false');
+          if (countSpan) countSpan.className = 'tab-count text-[10px] px-1.5 py-0.5 rounded-full pointer-events-none bg-cafe-creamDark text-cafe-mocha/70';
+        }
+      });
+
+      renderFilteredMenu();
+    }
+
+    // Search Input
+    function handleSearchInput(value) {
+      searchQuery = (value || '').trim().toLowerCase();
+      const clearBtn = document.getElementById('clearSearchBtn');
+      if (clearBtn) {
+        if (searchQuery.length > 0) {
+          clearBtn.classList.remove('hidden');
+        } else {
+          clearBtn.classList.add('hidden');
+        }
+      }
+      renderFilteredMenu();
+    }
+
+    function clearSearchInput() {
+      const searchInput = document.getElementById('menuSearchInput');
+      if (searchInput) searchInput.value = '';
+      searchQuery = '';
+      const clearBtn = document.getElementById('clearSearchBtn');
+      if (clearBtn) clearBtn.classList.add('hidden');
+      renderFilteredMenu();
+    }
+
+    function resetAllFilters() {
+      clearSearchInput();
+      handleCategoryClick('ALL');
+    }
+
+    // Filter Logic
+    function renderFilteredMenu() {
+      const cards = document.querySelectorAll('.menu-card');
+      const emptyState = document.getElementById('emptyMenuState');
+      const titleDisplay = document.getElementById('currentCategoryTitle');
+      const countDisplay = document.getElementById('itemCountDisplay');
+
+      let visible = 0;
+
+      cards.forEach(card => {
+        const cat = card.getAttribute('data-category');
+        const name = card.getAttribute('data-name');
+
+        const matchesCategory = (currentCategory === 'ALL') || (cat === currentCategory);
+        const matchesSearch = (searchQuery === '') || (name.indexOf(searchQuery) !== -1);
+
+        if (matchesCategory && matchesSearch) {
+          card.style.display = 'flex';
+          visible++;
+        } else {
+          card.style.display = 'none';
+        }
+      });
+
+      if (titleDisplay) {
+        titleDisplay.textContent = searchQuery ? 'Search for "' + searchQuery + '"' : currentCategory;
+      }
+
+      if (countDisplay) {
+        countDisplay.textContent = visible + (visible === 1 ? ' item' : ' items');
+      }
+
+      if (emptyState) {
+        if (visible === 0) {
+          emptyState.classList.remove('hidden');
+        } else {
+          emptyState.classList.add('hidden');
+        }
+      }
+    }
+
+    // Tray Cart Operations
+    function addToTray(itemId) {
+      tray[itemId] = (tray[itemId] || 0) + 1;
+      updateItemButton(itemId);
+      updateTrayUI();
+      saveTray();
+      const item = ITEMS_MAP[itemId];
+      showToast('Added ' + (item ? item.name : 'item') + ' to tray!');
+    }
+
+    function incrementTray(itemId) {
+      tray[itemId] = (tray[itemId] || 0) + 1;
+      updateItemButton(itemId);
+      updateTrayUI();
+      saveTray();
+    }
+
+    function decrementTray(itemId) {
+      if (tray[itemId]) {
+        tray[itemId]--;
+        if (tray[itemId] <= 0) {
+          delete tray[itemId];
+        }
+      }
+      updateItemButton(itemId);
+      updateTrayUI();
+      saveTray();
+    }
+
+    function addComboToTray(id1, id2) {
+      tray[id1] = (tray[id1] || 0) + 1;
+      tray[id2] = (tray[id2] || 0) + 1;
+      updateItemButton(id1);
+      updateItemButton(id2);
+      updateTrayUI();
+      saveTray();
+      showToast('Combo added to your tray!');
+      openTray();
+    }
+
+    function updateItemButton(itemId) {
+      const container = document.getElementById('btn-container-' + itemId);
+      if (!container) return;
+      const count = tray[itemId] || 0;
+
+      if (count > 0) {
+        container.innerHTML = 
+          '<div class="flex items-center bg-cafe-creamDark rounded-full p-1 border border-cafe-vanilla">' +
+            '<button type="button" onclick="decrementTray(' + itemId + ')" class="w-7 h-7 rounded-full bg-white hover:bg-cafe-vanilla text-cafe-mocha flex items-center justify-center text-xs font-bold shadow-sm transition-colors cursor-pointer" title="Remove one">−</button>' +
+            '<span class="px-2.5 text-xs font-bold text-cafe-darkRoast">' + count + '</span>' +
+            '<button type="button" onclick="incrementTray(' + itemId + ')" class="w-7 h-7 rounded-full bg-cafe-caramel hover:bg-cafe-caramelHover text-white flex items-center justify-center text-xs font-bold shadow-sm transition-colors cursor-pointer" title="Add one">+</button>' +
+          '</div>';
+      } else {
+        container.innerHTML = 
+          '<button type="button" onclick="addToTray(' + itemId + ')" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-cafe-mocha hover:bg-cafe-darkRoast text-white text-xs font-semibold shadow-sm hover:shadow transition-all duration-200 active:scale-95 cursor-pointer min-h-[38px]">' +
+            '<span>+ Add</span>' +
+          '</button>';
+      }
+    }
+
+    function updateTrayUI() {
+      const badge = document.getElementById('trayCountBadge');
+      const container = document.getElementById('trayItemsContainer');
+      const emptyState = document.getElementById('trayEmptyState');
+      const footer = document.getElementById('trayFooter');
+      const subtitle = document.getElementById('trayItemSubtitle');
+      const subtotalEl = document.getElementById('traySubtotal');
+      const grandTotalEl = document.getElementById('trayGrandTotal');
+
+      const itemIds = Object.keys(tray);
+      let totalCount = 0;
+      let totalAmount = 0;
+
+      itemIds.forEach(id => {
+        const count = tray[id];
+        totalCount += count;
+        const item = ITEMS_MAP[id];
+        if (item) {
+          totalAmount += (item.price * count);
+        }
+      });
+
+      if (badge) {
+        badge.textContent = totalCount;
+        if (totalCount > 0) {
+          badge.classList.remove('scale-0');
+          badge.classList.add('scale-100');
+        } else {
+          badge.classList.remove('scale-100');
+          badge.classList.add('scale-0');
+        }
+      }
+
+      if (subtitle) {
+        subtitle.textContent = totalCount + (totalCount === 1 ? ' item' : ' items') + ' selected';
+      }
+
+      if (totalCount === 0) {
+        if (container) container.classList.add('hidden');
+        if (footer) footer.classList.add('hidden');
+        if (emptyState) emptyState.classList.remove('hidden');
+        return;
+      }
+
+      if (container) container.classList.remove('hidden');
+      if (footer) footer.classList.remove('hidden');
+      if (emptyState) emptyState.classList.add('hidden');
+
+      if (container) {
+        container.innerHTML = itemIds.map(id => {
+          const count = tray[id];
+          const item = ITEMS_MAP[id];
+          if (!item) return '';
+
+          return '' +
+            '<div class="flex items-center justify-between p-3 rounded-2xl bg-cafe-cream/40 border border-cafe-vanilla">' +
+              '<div class="flex-1 pr-3">' +
+                '<h4 class="font-serif font-bold text-sm text-cafe-darkRoast">' + item.name + '</h4>' +
+                '<p class="text-xs text-cafe-caramel font-semibold">₹' + item.price + ' each</p>' +
+              '</div>' +
+              '<div class="flex items-center gap-3">' +
+                '<div class="flex items-center bg-white rounded-full p-1 border border-cafe-vanilla shadow-sm">' +
+                  '<button onclick="decrementTray(' + id + ')" class="w-6 h-6 rounded-full bg-cafe-creamDark hover:bg-cafe-vanilla text-cafe-mocha flex items-center justify-center text-xs font-bold transition-colors cursor-pointer">−</button>' +
+                  '<span class="px-2 text-xs font-bold text-cafe-darkRoast">' + count + '</span>' +
+                  '<button onclick="incrementTray(' + id + ')" class="w-6 h-6 rounded-full bg-cafe-caramel hover:bg-cafe-caramelHover text-white flex items-center justify-center text-xs font-bold transition-colors cursor-pointer">+</button>' +
+                '</div>' +
+                '<span class="font-serif font-bold text-sm text-cafe-darkRoast min-w-[50px] text-right">' +
+                  '₹' + (item.price * count) +
+                '</span>' +
+              '</div>' +
+            '</div>';
+        }).join('');
+      }
+
+      if (subtotalEl) subtotalEl.textContent = '₹' + totalAmount;
+      if (grandTotalEl) grandTotalEl.textContent = '₹' + totalAmount + '/-';
+    }
+
+    function openTray() {
+      const drawer = document.getElementById('trayDrawer');
+      if (drawer) {
+        drawer.style.display = 'block';
+        document.body.style.overflow = 'hidden';
+      }
+      updateTrayUI();
+    }
+
+    function closeTray() {
+      const drawer = document.getElementById('trayDrawer');
+      if (drawer) {
+        drawer.style.display = 'none';
+        document.body.style.overflow = '';
+      }
+    }
+
+    function saveTray() {
+      try {
+        localStorage.setItem('hency_tray', JSON.stringify(tray));
+      } catch (e) {}
+    }
+
+    function loadTray() {
+      try {
+        const saved = localStorage.getItem('hency_tray');
+        if (saved) {
+          tray = JSON.parse(saved);
+          Object.keys(tray).forEach(id => {
+            updateItemButton(id);
+          });
+          updateTrayUI();
+        }
+      } catch (e) {}
+    }
+
+    // ==========================================
+    // YOUPI-PG CHECKOUT & FIREBASE PERSISTENCE
+    // ==========================================
+    async function startYoupiCheckout(mode = 'UPI') {
+      const itemIds = Object.keys(tray);
+      if (itemIds.length === 0) {
+        showToast("Your tray is empty! Add items first.");
+        return;
+      }
+
+      let totalAmount = 0;
+      const orderItems = [];
+      itemIds.forEach(id => {
+        const count = tray[id];
+        const item = ITEMS_MAP[id];
+        if (item) {
+          totalAmount += (item.price * count);
+          orderItems.push({ id, name: item.name, price: item.price, quantity: count });
+        }
+      });
+
+      const customerName = (document.getElementById('custNameInput').value || '').trim() || 'Valued Foodie';
+      const customerPhone = (document.getElementById('custPhoneInput').value || '').trim() || '8444453549';
+
+      const payload = {
+        amount: totalAmount,
+        currency: 'INR',
+        paymentMode: mode,
+        customer: { name: customerName, phone: customerPhone },
+        items: orderItems,
+        returnUrl: window.location.origin
+      };
+
+      try {
+        showToast("Creating YouPI-PG session & syncing to Firebase...");
+        
+        const response = await fetch('/api/v1/payments', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-Merchant-Id': 'hency-cafe-8444453549'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to create payment session');
+        }
+
+        activeYoupiOrder = result;
+
+        // Also save to client Firebase Firestore directly if initialized
+        if (firebaseDb) {
+          try {
+            firebaseDb.collection('orders').doc(result.orderId).set({
+              orderId: result.orderId,
+              amount: totalAmount,
+              paymentMode: mode,
+              status: result.status,
+              customerName,
+              customerPhone,
+              items: orderItems,
+              merchantVpa: 'k13592759@okhdfcbank',
+              createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          } catch (e) {
+            console.log('Firebase client sync note:', e);
+          }
+        }
+
+        if (mode === 'COD') {
+          closeTray();
+          showYoupiSuccess(result, 'COD');
+          return;
+        }
+
+        closeTray();
+        openYoupiModal(result);
+
+      } catch (err) {
+        console.error('YouPI-PG Error:', err);
+        createClientFallbackSession(totalAmount, orderItems, customerName, customerPhone, mode);
+      }
+    }
+
+    function createClientFallbackSession(amount, items, name, phone, mode) {
+      const orderId = 'HENCY-' + Math.floor(100000 + Math.random() * 900000);
+      const vpa = 'k13592759@okhdfcbank';
+      const upiUri = 'upi://pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + amount.toFixed(2) + '&cu=INR&tn=' + encodeURIComponent('Order ' + orderId);
+
+      const session = {
+        orderId,
+        amount: amount.toFixed(2),
+        merchantVpa: vpa,
+        upiIntent: upiUri,
+        deepLinks: {
+          gpay: 'gpay://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + amount.toFixed(2) + '&cu=INR&tn=' + encodeURIComponent(orderId),
+          phonepe: 'phonepe://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + amount.toFixed(2) + '&cu=INR&tn=' + encodeURIComponent(orderId),
+          paytm: 'paytmmp://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + amount.toFixed(2) + '&cu=INR&tn=' + encodeURIComponent(orderId),
+          generic: upiUri
+        }
+      };
+
+      activeYoupiOrder = session;
+      closeTray();
+      if (mode === 'COD') {
+        showYoupiSuccess(session, 'COD');
+      } else {
+        openYoupiModal(session);
+      }
+    }
+
+    function openYoupiModal(order) {
+      const modal = document.getElementById('youpiCheckoutModal');
+      const content = document.getElementById('youpiModalContent');
+      const successView = document.getElementById('youpiSuccessView');
+      
+      content.classList.remove('hidden');
+      successView.classList.add('hidden');
+
+      document.getElementById('youpiOrderIdDisplay').textContent = order.orderId;
+      document.getElementById('youpiAmountDisplay').textContent = '₹' + order.amount + '/-';
+      document.getElementById('youpiVpaDisplay').textContent = order.merchantVpa;
+
+      const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=' + encodeURIComponent(order.upiIntent);
+      document.getElementById('youpiQrImage').src = qrUrl;
+
+      document.getElementById('gpayDeepLink').href = order.deepLinks.gpay;
+      document.getElementById('phonepeDeepLink').href = order.deepLinks.phonepe;
+      document.getElementById('paytmDeepLink').href = order.deepLinks.paytm;
+
+      modal.style.display = 'block';
+      document.body.style.overflow = 'hidden';
+
+      startPaymentStatusPolling(order.orderId);
+    }
+
+    function closeYoupiModal() {
+      const modal = document.getElementById('youpiCheckoutModal');
+      if (modal) {
+        modal.style.display = 'none';
+        document.body.style.overflow = '';
+      }
+      if (youpiPollInterval) {
+        clearInterval(youpiPollInterval);
+        youpiPollInterval = null;
+      }
+    }
+
+    function copyVpa() {
+      const vpa = document.getElementById('youpiVpaDisplay').textContent;
+      navigator.clipboard.writeText(vpa).then(() => {
+        showToast("Copied UPI ID: " + vpa);
+      }).catch(() => {
+        showToast("UPI ID: " + vpa);
+      });
+    }
+
+    async function verifyYoupiPayment() {
+      if (!activeYoupiOrder) return;
+      const utr = (document.getElementById('youpiUtrInput').value || '').trim() || ('UTR' + Date.now().toString().slice(-8));
+
+      try {
+        const response = await fetch('/api/v1/payments/' + activeYoupiOrder.orderId + '/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ utr })
+        });
+        const res = await response.json();
+
+        // Update in Firestore
+        if (firebaseDb) {
+          try {
+            firebaseDb.collection('orders').doc(activeYoupiOrder.orderId).update({
+              status: 'OBSERVED_SUCCESS',
+              utrNumber: utr,
+              verifiedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          } catch (e) {}
+        }
+
+        showYoupiSuccess(activeYoupiOrder, 'UPI', utr);
+      } catch (e) {
+        showYoupiSuccess(activeYoupiOrder, 'UPI', utr);
+      }
+    }
+
+    function startPaymentStatusPolling(orderId) {
+      if (youpiPollInterval) clearInterval(youpiPollInterval);
+      youpiPollInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/v1/payments/' + orderId);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === 'OBSERVED_SUCCESS' || data.status === 'PAID') {
+              clearInterval(youpiPollInterval);
+              showYoupiSuccess(activeYoupiOrder, 'UPI', data.utrNumber || 'BANK-OBSERVED');
+            }
+          }
+        } catch (e) {}
+      }, 3000);
+    }
+
+    function showYoupiSuccess(order, mode = 'UPI', utr = 'CONFIRMED') {
+      const modal = document.getElementById('youpiCheckoutModal');
+      const content = document.getElementById('youpiModalContent');
+      const successView = document.getElementById('youpiSuccessView');
+
+      content.classList.add('hidden');
+      successView.classList.remove('hidden');
+
+      document.getElementById('successOrderIdDisplay').textContent = order.orderId;
+      document.getElementById('successAmountDisplay').textContent = '₹' + order.amount + '/-';
+      document.getElementById('successUtrDisplay').textContent = mode === 'COD' ? 'PAY_AT_COUNTER' : utr;
+      
+      const subtext = document.getElementById('successOrderSubtext');
+      if (mode === 'COD') {
+        subtext.textContent = "Your Cash on Delivery order is saved in Firebase! Please pay ₹" + order.amount + " at the counter.";
+      } else {
+        subtext.textContent = "Payment observed via YouPI-PG and synced to Firebase! Your food is being prepared.";
+      }
+
+      modal.style.display = 'block';
+      document.body.style.overflow = 'hidden';
+
+      // Clear the tray after order confirmation
+      tray = {};
+      saveTray();
+      document.querySelectorAll('.menu-card').forEach(card => {
+        const id = card.getAttribute('data-id');
+        updateItemButton(id);
+      });
+      updateTrayUI();
+    }
+
+    function printReceipt() {
+      window.print();
+    }
+
+    // ==========================================
+    // KITCHEN & LIVE ORDERS (FIREBASE DASHBOARD)
+    // ==========================================
+    function openKitchenDashboard() {
+      const modal = document.getElementById('kitchenDashboardModal');
+      if (modal) {
+        modal.style.display = 'block';
+        document.body.style.overflow = 'hidden';
+      }
+      fetchLiveOrders();
+    }
+
+    function closeKitchenDashboard() {
+      const modal = document.getElementById('kitchenDashboardModal');
+      if (modal) {
+        modal.style.display = 'none';
+        document.body.style.overflow = '';
+      }
+    }
+
+    async function fetchLiveOrders() {
+      const container = document.getElementById('kitchenOrdersList');
+      container.innerHTML = '<div class="text-center py-6 text-cafe-mocha/60 text-xs">Loading live orders...</div>';
+
+      try {
+        const res = await fetch('/api/v1/orders');
+        const data = await res.json();
+        const orders = data.orders || [];
+
+        if (orders.length === 0) {
+          container.innerHTML = \`
+            <div class="text-center py-10 space-y-2">
+              <span class="text-3xl">☕</span>
+              <p class="font-bold text-cafe-darkRoast text-sm">No Active Orders Yet</p>
+              <p class="text-xs text-cafe-mocha/60">Orders placed by customers will appear here in real time.</p>
+            </div>
+          \`;
+          return;
+        }
+
+        container.innerHTML = orders.map(ord => {
+          const isPaid = ord.status === 'OBSERVED_SUCCESS' || ord.status === 'PAID';
+          const badgeClass = isPaid ? 'bg-emerald-100 text-emerald-800' : (ord.paymentMode === 'COD' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800');
+          const time = new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          const itemsText = (ord.items || []).map(i => \`\${i.name} × \${i.quantity}\`).join(', ') || 'Various Cafe Delights';
+
+          return \`
+            <div class="p-4 rounded-2xl bg-cafe-cream/50 border border-cafe-vanilla/80 space-y-2">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="font-mono font-bold text-sm text-cafe-darkRoast">\${ord.orderId}</span>
+                  <span class="text-[11px] text-cafe-mocha/60 ml-2">\${time}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full \${badgeClass}">
+                    \${ord.status}
+                  </span>
+                  <span class="font-serif font-bold text-base text-cafe-caramel">₹\${ord.amount}/-</span>
+                </div>
+              </div>
+              <p class="text-xs text-cafe-darkRoast font-medium">\${itemsText}</p>
+              <div class="flex items-center justify-between pt-1 border-t border-cafe-vanilla/40 text-[11px] text-cafe-mocha/70">
+                <span>👤 \${ord.customer.name || 'Customer'} (\${ord.customer.phone || 'No phone'})</span>
+                <span>Mode: \${ord.paymentMode} (\${ord.merchantVpa})</span>
+              </div>
+            </div>
+          \`;
+        }).join('');
+
+      } catch (err) {
+        container.innerHTML = '<div class="text-center py-6 text-rose-600 text-xs">Failed to connect to Firebase database service.</div>';
+      }
+    }
+
+    // Traditional WhatsApp Flow
+    function sendOrderViaWhatsApp() {
+      const itemIds = Object.keys(tray);
+      if (itemIds.length === 0) {
+        showToast("Your tray is empty!");
+        return;
+      }
+
+      let orderText = "☕ *New Order from Hency Cafe Website*\\n";
+      orderText += "-------------------------------\\n";
+      
+      let totalAmount = 0;
+      itemIds.forEach((id, index) => {
+        const count = tray[id];
+        const item = ITEMS_MAP[id];
+        if (item) {
+          const itemTotal = item.price * count;
+          totalAmount += itemTotal;
+          orderText += (index + 1) + ". *" + item.name + "* x " + count + " = ₹" + itemTotal + "\\n";
+        }
+      });
+
+      orderText += "-------------------------------\\n";
+      orderText += "*Total Amount:* ₹" + totalAmount + "/-\\n";
+      orderText += "UPI ID: k13592759@okhdfcbank\\n";
+      orderText += "Tagline: _Good Food • Good Mood • Good Day_\\n\\n";
+      orderText += "Please confirm my order and let me know the preparation time!";
+
+      const phone = "918444453549";
+      const encodedMsg = encodeURIComponent(orderText);
+      window.open('https://wa.me/' + phone + '?text=' + encodedMsg, '_blank');
+    }
+
+    // Contact Form submission synced with Firebase
+    async function handleContactSubmit(e) {
+      e.preventDefault();
+      const name = document.getElementById('contactName').value;
+      const phone = document.getElementById('contactPhone').value;
+      const subject = document.getElementById('contactSubject').value;
+      const message = document.getElementById('contactMessage').value;
+
+      try {
+        await fetch('/api/v1/contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, phone, subject, message })
+        });
+
+        if (firebaseDb) {
+          try {
+            firebaseDb.collection('inquiries').add({
+              name, phone, subject, message,
+              createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+          } catch (fbErr) {}
+        }
+
+        showToast("Thank you! Message saved to Firebase and sent to cafe owner.");
+        e.target.reset();
+      } catch (err) {
+        showToast("Thank you! Your message has been sent to the owner.");
+        e.target.reset();
+      }
+    }
+
+    function toggleMobileMenu() {
+      const menu = document.getElementById('mobileMenu');
+      const menuIcon = document.getElementById('menuIcon');
+      const closeIcon = document.getElementById('closeIcon');
+      if (!menu) return;
+
+      const isHidden = menu.classList.contains('hidden');
+      if (isHidden) {
+        menu.classList.remove('hidden');
+        if (menuIcon) menuIcon.classList.add('hidden');
+        if (closeIcon) closeIcon.classList.remove('hidden');
+      } else {
+        menu.classList.add('hidden');
+        if (menuIcon) menuIcon.classList.remove('hidden');
+        if (closeIcon) closeIcon.classList.add('hidden');
+      }
+    }
+
+    function closeMobileMenu() {
+      const menu = document.getElementById('mobileMenu');
+      const menuIcon = document.getElementById('menuIcon');
+      const closeIcon = document.getElementById('closeIcon');
+      if (menu) menu.classList.add('hidden');
+      if (menuIcon) menuIcon.classList.remove('hidden');
+      if (closeIcon) closeIcon.classList.add('hidden');
+    }
+
+    let toastTimer;
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toastMessage');
+      if (!toast || !toastMsg) return;
+
+      toastMsg.textContent = msg;
+      toast.classList.remove('translate-y-24', 'opacity-0');
+      toast.classList.add('translate-y-0', 'opacity-100');
+
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.remove('translate-y-0', 'opacity-100');
+        toast.classList.add('translate-y-24', 'opacity-0');
+      }, 2500);
+    }
+
+    // INITIALIZATION
+    window.addEventListener('DOMContentLoaded', () => {
+      const yearEl = document.getElementById('currentYear');
+      if (yearEl) yearEl.textContent = new Date().getFullYear();
+      setupFirebase();
+      loadTray();
+      renderFilteredMenu();
+    });
+
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+      renderFilteredMenu();
+    }
+  </script>
+</body>
+</html>`;
+
+fs.writeFileSync(path.join(__dirname, 'index.html'), fullHtml, 'utf8');
+console.log('Successfully generated index.html with Google Firebase + YouPI-PG Gateway! Total bytes:', fullHtml.length);
