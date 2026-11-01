@@ -4383,6 +4383,19 @@
     // ==========================================
     // YOUPI-PG CHECKOUT & FIREBASE PERSISTENCE
     // ==========================================
+    function saveOrderToLocalStorage(order) {
+      try {
+        const list = JSON.parse(localStorage.getItem('hency_orders') || '[]');
+        const idx = list.findIndex(o => o.orderId === order.orderId);
+        if (idx >= 0) {
+          list[idx] = { ...list[idx], ...order };
+        } else {
+          list.unshift(order);
+        }
+        localStorage.setItem('hency_orders', JSON.stringify(list.slice(0, 50)));
+      } catch (e) {}
+    }
+
     async function startYoupiCheckout(mode = 'UPI') {
       const itemIds = Object.keys(tray);
       if (itemIds.length === 0) {
@@ -4403,88 +4416,88 @@
 
       const customerName = (document.getElementById('custNameInput').value || '').trim() || 'Valued Foodie';
       const customerPhone = (document.getElementById('custPhoneInput').value || '').trim() || '8444453549';
+      const orderId = 'HENCY-' + Math.floor(100000 + Math.random() * 900000);
 
-      const payload = {
-        amount: totalAmount,
-        currency: 'INR',
-        paymentMode: mode,
-        customer: { name: customerName, phone: customerPhone },
-        items: orderItems,
-        returnUrl: window.location.origin
-      };
+      // Create client-side session immediately (works seamlessly on GitHub Pages and local servers)
+      createClientFallbackSession(totalAmount, orderItems, customerName, customerPhone, mode, orderId);
 
-      try {
-        showToast("Creating YouPI-PG session & syncing to Firebase...");
-        
-        const response = await fetch('/api/v1/payments', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'X-Merchant-Id': 'hency-cafe-8444453549'
-          },
-          body: JSON.stringify(payload)
-        });
-
-        const result = await response.json();
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to create payment session');
-        }
-
-        activeYoupiOrder = result;
-
-        // Also save to client Firebase Firestore directly if initialized
-        if (firebaseDb) {
-          try {
-            firebaseDb.collection('orders').doc(result.orderId).set({
-              orderId: result.orderId,
+      // If running on local server, notify server asynchronously
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        try {
+          fetch('/api/v1/payments', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'X-Merchant-Id': 'hency-cafe-8444453549'
+            },
+            body: JSON.stringify({
+              orderId,
               amount: totalAmount,
+              currency: 'INR',
               paymentMode: mode,
-              status: result.status,
-              customerName,
-              customerPhone,
+              customer: { name: customerName, phone: customerPhone },
               items: orderItems,
-              merchantVpa: 'k13592759@okhdfcbank',
-              createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-          } catch (e) {
-            console.log('Firebase client sync note:', e);
-          }
-        }
-
-        if (mode === 'COD') {
-          closeTray();
-          showYoupiSuccess(result, 'COD');
-          return;
-        }
-
-        closeTray();
-        openYoupiModal(result);
-
-      } catch (err) {
-        console.error('YouPI-PG Error:', err);
-        createClientFallbackSession(totalAmount, orderItems, customerName, customerPhone, mode);
+              returnUrl: window.location.origin
+            })
+          }).catch(() => {});
+        } catch (e) {}
       }
     }
 
-    function createClientFallbackSession(amount, items, name, phone, mode) {
-      const orderId = 'HENCY-' + Math.floor(100000 + Math.random() * 900000);
+    function createClientFallbackSession(amount, items, name, phone, mode, customOrderId) {
+      const orderId = customOrderId || ('HENCY-' + Math.floor(100000 + Math.random() * 900000));
       const vpa = 'k13592759@okhdfcbank';
-      const upiUri = 'upi://pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + amount.toFixed(2) + '&cu=INR&tn=' + encodeURIComponent('Order ' + orderId);
+      const numAmount = typeof amount === 'number' ? amount : parseFloat(amount);
+      const formattedAmount = numAmount.toFixed(2);
+      const upiUri = 'upi://pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + formattedAmount + '&cu=INR&tn=' + encodeURIComponent('Order ' + orderId);
 
       const session = {
         orderId,
-        amount: amount.toFixed(2),
+        amount: formattedAmount,
         merchantVpa: vpa,
         upiIntent: upiUri,
         deepLinks: {
-          gpay: 'gpay://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + amount.toFixed(2) + '&cu=INR&tn=' + encodeURIComponent(orderId),
-          phonepe: 'phonepe://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + amount.toFixed(2) + '&cu=INR&tn=' + encodeURIComponent(orderId),
-          paytm: 'paytmmp://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + amount.toFixed(2) + '&cu=INR&tn=' + encodeURIComponent(orderId),
+          gpay: 'gpay://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + formattedAmount + '&cu=INR&tn=' + encodeURIComponent(orderId),
+          phonepe: 'phonepe://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + formattedAmount + '&cu=INR&tn=' + encodeURIComponent(orderId),
+          paytm: 'paytmmp://upi/pay?pa=' + encodeURIComponent(vpa) + '&pn=Hency%20Cafe&am=' + formattedAmount + '&cu=INR&tn=' + encodeURIComponent(orderId),
           generic: upiUri
-        }
+        },
+        status: mode === 'COD' ? 'PLACED_COD' : 'PENDING_UPI',
+        paymentMode: mode,
+        customer: { name, phone },
+        items,
+        createdAt: new Date().toISOString()
       };
 
       activeYoupiOrder = session;
+
+      // 1. Direct write to Firebase Firestore (Client-side)
+      if (firebaseDb) {
+        try {
+          firebaseDb.collection('orders').doc(orderId).set({
+            orderId,
+            amount: numAmount,
+            currency: 'INR',
+            paymentMode: mode,
+            status: session.status,
+            customerName: name,
+            customerPhone: phone,
+            items,
+            merchantVpa: vpa,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          }).then(() => {
+            console.log('🔥 Order saved to Firebase Firestore:', orderId);
+          }).catch(err => {
+            console.warn('Firebase Firestore save warning:', err.message);
+          });
+        } catch (e) {
+          console.warn('Firebase write note:', e);
+        }
+      }
+
+      // 2. Save order to browser localStorage
+      saveOrderToLocalStorage(session);
+
       closeTray();
       if (mode === 'COD') {
         showYoupiSuccess(session, 'COD');
@@ -4543,33 +4556,43 @@
       if (!activeYoupiOrder) return;
       const utr = (document.getElementById('youpiUtrInput').value || '').trim() || ('UTR' + Date.now().toString().slice(-8));
 
-      try {
-        const response = await fetch('/api/v1/payments/' + activeYoupiOrder.orderId + '/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ utr })
-        });
-        const res = await response.json();
-
-        // Update in Firestore
-        if (firebaseDb) {
-          try {
-            firebaseDb.collection('orders').doc(activeYoupiOrder.orderId).update({
-              status: 'OBSERVED_SUCCESS',
-              utrNumber: utr,
-              verifiedAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-          } catch (e) {}
-        }
-
-        showYoupiSuccess(activeYoupiOrder, 'UPI', utr);
-      } catch (e) {
-        showYoupiSuccess(activeYoupiOrder, 'UPI', utr);
+      // Local server sync if running locally
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        try {
+          await fetch('/api/v1/payments/' + activeYoupiOrder.orderId + '/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ utr })
+          });
+        } catch (e) {}
       }
+
+      // Update in Firebase Firestore
+      if (firebaseDb) {
+        try {
+          await firebaseDb.collection('orders').doc(activeYoupiOrder.orderId).update({
+            status: 'OBSERVED_SUCCESS',
+            utrNumber: utr,
+            verifiedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        } catch (e) {
+          console.warn('Firestore status update note:', e);
+        }
+      }
+
+      // Update in localStorage
+      saveOrderToLocalStorage({
+        orderId: activeYoupiOrder.orderId,
+        status: 'OBSERVED_SUCCESS',
+        utrNumber: utr
+      });
+
+      showYoupiSuccess(activeYoupiOrder, 'UPI', utr);
     }
 
     function startPaymentStatusPolling(orderId) {
       if (youpiPollInterval) clearInterval(youpiPollInterval);
+      if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') return;
       youpiPollInterval = setInterval(async () => {
         try {
           const res = await fetch('/api/v1/payments/' + orderId);
@@ -4623,6 +4646,8 @@
     // ==========================================
     // KITCHEN & LIVE ORDERS (FIREBASE DASHBOARD)
     // ==========================================
+    let liveOrdersUnsubscribe = null;
+
     function openKitchenDashboard() {
       const modal = document.getElementById('kitchenDashboardModal');
       if (modal) {
@@ -4630,6 +4655,7 @@
         document.body.style.overflow = 'hidden';
       }
       fetchLiveOrders();
+      setupLiveOrdersListener();
     }
 
     function closeKitchenDashboard() {
@@ -4638,61 +4664,212 @@
         modal.style.display = 'none';
         document.body.style.overflow = '';
       }
+      if (liveOrdersUnsubscribe) {
+        try { liveOrdersUnsubscribe(); } catch(e) {}
+        liveOrdersUnsubscribe = null;
+      }
+    }
+
+    function setupLiveOrdersListener() {
+      if (!firebaseDb) return;
+      try {
+        if (liveOrdersUnsubscribe) {
+          liveOrdersUnsubscribe();
+          liveOrdersUnsubscribe = null;
+        }
+        liveOrdersUnsubscribe = firebaseDb.collection('orders')
+          .orderBy('createdAt', 'desc')
+          .limit(30)
+          .onSnapshot(snapshot => {
+            const orders = [];
+            snapshot.forEach(doc => {
+              const d = doc.data();
+              let dt = d.createdAt ? (d.createdAt.toDate ? d.createdAt.toDate() : new Date(d.createdAt)) : new Date();
+              orders.push({
+                orderId: doc.id,
+                amount: d.amount || 0,
+                status: d.status || 'PENDING',
+                paymentMode: d.paymentMode || 'UPI',
+                merchantVpa: d.merchantVpa || 'k13592759@okhdfcbank',
+                customer: {
+                  name: d.customerName || (d.customer && d.customer.name) || 'Customer',
+                  phone: d.customerPhone || (d.customer && d.customer.phone) || ''
+                },
+                items: d.items || [],
+                createdAt: dt
+              });
+            });
+            renderKitchenOrdersList(orders, true);
+          }, err => {
+            console.warn('Realtime listener fallback note:', err.message);
+          });
+      } catch (err) {
+        console.warn('Live listener not available:', err);
+      }
     }
 
     async function fetchLiveOrders() {
       const container = document.getElementById('kitchenOrdersList');
-      container.innerHTML = '<div class="text-center py-6 text-cafe-mocha/60 text-xs">Loading live orders...</div>';
+      container.innerHTML = '<div class="text-center py-6 text-cafe-mocha/60 text-xs">Connecting to Firebase Firestore...</div>';
 
+      let orders = [];
+      let firebaseConnected = false;
+      let errorDetails = '';
+
+      // 1. Query Firebase Firestore directly from browser
+      if (firebaseDb) {
+        try {
+          const snapshot = await firebaseDb.collection('orders').orderBy('createdAt', 'desc').limit(30).get();
+          snapshot.forEach(doc => {
+            const d = doc.data();
+            let dt = d.createdAt ? (d.createdAt.toDate ? d.createdAt.toDate() : new Date(d.createdAt)) : new Date();
+            orders.push({
+              orderId: doc.id,
+              amount: d.amount || 0,
+              status: d.status || 'PENDING',
+              paymentMode: d.paymentMode || 'UPI',
+              merchantVpa: d.merchantVpa || 'k13592759@okhdfcbank',
+              customer: {
+                name: d.customerName || (d.customer && d.customer.name) || 'Customer',
+                phone: d.customerPhone || (d.customer && d.customer.phone) || ''
+              },
+              items: d.items || [],
+              createdAt: dt
+            });
+          });
+          firebaseConnected = true;
+        } catch (fbErr) {
+          console.warn('Firestore direct fetch note:', fbErr);
+          errorDetails = fbErr.message || '';
+          // Fallback: try reading without orderBy (in case indexing isn't generated)
+          try {
+            const snap = await firebaseDb.collection('orders').limit(30).get();
+            snap.forEach(doc => {
+              const d = doc.data();
+              let dt = d.createdAt ? (d.createdAt.toDate ? d.createdAt.toDate() : new Date(d.createdAt)) : new Date();
+              orders.push({
+                orderId: doc.id,
+                amount: d.amount || 0,
+                status: d.status || 'PENDING',
+                paymentMode: d.paymentMode || 'UPI',
+                merchantVpa: d.merchantVpa || 'k13592759@okhdfcbank',
+                customer: {
+                  name: d.customerName || (d.customer && d.customer.name) || 'Customer',
+                  phone: d.customerPhone || (d.customer && d.customer.phone) || ''
+                },
+                items: d.items || [],
+                createdAt: dt
+              });
+            });
+            firebaseConnected = true;
+          } catch (e2) {
+            console.warn('Firestore fallback fetch note:', e2);
+          }
+        }
+      }
+
+      // 2. If running locally on localhost, also probe local backend
+      if (orders.length === 0 && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+        try {
+          const res = await fetch('/api/v1/orders');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.orders && data.orders.length > 0) {
+              orders = data.orders;
+              firebaseConnected = true;
+            }
+          }
+        } catch (err) {}
+      }
+
+      // 3. Merge with orders in localStorage so no browser orders are lost
       try {
-        const res = await fetch('/api/v1/orders');
-        const data = await res.json();
-        const orders = data.orders || [];
+        const localList = JSON.parse(localStorage.getItem('hency_orders') || '[]');
+        if (localList.length > 0) {
+          const ids = new Set(orders.map(o => o.orderId));
+          localList.forEach(lo => {
+            if (!ids.has(lo.orderId)) {
+              orders.push(lo);
+            }
+          });
+        }
+      } catch (e) {}
 
-        if (orders.length === 0) {
-          container.innerHTML = `
-            <div class="text-center py-10 space-y-2">
-              <span class="text-3xl">☕</span>
-              <p class="font-bold text-cafe-darkRoast text-sm">No Active Orders Yet</p>
-              <p class="text-xs text-cafe-mocha/60">Orders placed by customers will appear here in real time.</p>
-            </div>
-          `;
-          return;
+      renderKitchenOrdersList(orders, firebaseConnected, errorDetails);
+    }
+
+    function renderKitchenOrdersList(orders, firebaseConnected = true, errorDetails = '') {
+      const container = document.getElementById('kitchenOrdersList');
+      if (!container) return;
+
+      if (!orders || orders.length === 0) {
+        let helpNote = '';
+        if (!firebaseConnected && errorDetails) {
+          if (errorDetails.toLowerCase().includes('permission') || errorDetails.toLowerCase().includes('missing')) {
+            helpNote = `
+              <div class="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-left space-y-1">
+                <p class="text-xs font-bold text-amber-900">💡 Firebase Database Setup Tip:</p>
+                <p class="text-[11px] text-amber-800 leading-relaxed">
+                  Your Cloud Firestore database is active! To allow orders to be saved and viewed publicly, in 
+                  <strong>Firebase Console → Firestore Database → Rules</strong>, set:
+                </p>
+                <pre class="bg-white/80 p-2 rounded text-[10px] text-cafe-darkRoast font-mono overflow-x-auto">allow read, write: if true;</pre>
+              </div>
+            `;
+          } else if (errorDetails.toLowerCase().includes('not-found') || errorDetails.toLowerCase().includes('not exist')) {
+            helpNote = `
+              <div class="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-left space-y-1">
+                <p class="text-xs font-bold text-amber-900">💡 Create Firestore Database:</p>
+                <p class="text-[11px] text-amber-800 leading-relaxed">
+                  Go to <strong>Firebase Console → Databases and storage → Firestore Database</strong> and click <strong>"Create database"</strong>.
+                </p>
+              </div>
+            `;
+          }
         }
 
-        container.innerHTML = orders.map(ord => {
-          const isPaid = ord.status === 'OBSERVED_SUCCESS' || ord.status === 'PAID';
-          const badgeClass = isPaid ? 'bg-emerald-100 text-emerald-800' : (ord.paymentMode === 'COD' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800');
-          const time = new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        container.innerHTML = `
+          <div class="text-center py-10 space-y-2">
+            <span class="text-3xl">☕</span>
+            <p class="font-bold text-cafe-darkRoast text-sm">No Active Orders Yet</p>
+            <p class="text-xs text-cafe-mocha/60">Place a test order from the menu or your tray to see it appear here in real time!</p>
+            ${helpNote}
+          </div>
+        `;
+        return;
+      }
 
-          const itemsText = (ord.items || []).map(i => `${i.name} × ${i.quantity}`).join(', ') || 'Various Cafe Delights';
+      container.innerHTML = orders.map(ord => {
+        const isPaid = ord.status === 'OBSERVED_SUCCESS' || ord.status === 'PAID';
+        const badgeClass = isPaid ? 'bg-emerald-100 text-emerald-800' : (ord.paymentMode === 'COD' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800');
+        const time = ord.createdAt ? new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now';
 
-          return `
-            <div class="p-4 rounded-2xl bg-cafe-cream/50 border border-cafe-vanilla/80 space-y-2">
-              <div class="flex items-center justify-between">
-                <div>
-                  <span class="font-mono font-bold text-sm text-cafe-darkRoast">${ord.orderId}</span>
-                  <span class="text-[11px] text-cafe-mocha/60 ml-2">${time}</span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeClass}">
-                    ${ord.status}
-                  </span>
-                  <span class="font-serif font-bold text-base text-cafe-caramel">₹${ord.amount}/-</span>
-                </div>
+        const itemsText = (ord.items || []).map(i => `${i.name} × ${i.quantity}`).join(', ') || 'Various Cafe Delights';
+        const custName = (ord.customer && ord.customer.name) || ord.customerName || 'Customer';
+        const custPhone = (ord.customer && ord.customer.phone) || ord.customerPhone || 'N/A';
+
+        return `
+          <div class="p-4 rounded-2xl bg-cafe-cream/50 border border-cafe-vanilla/80 space-y-2 hover:border-cafe-caramel/50 transition-colors">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="font-mono font-bold text-sm text-cafe-darkRoast">${ord.orderId}</span>
+                <span class="text-[11px] text-cafe-mocha/60 ml-2">${time}</span>
               </div>
-              <p class="text-xs text-cafe-darkRoast font-medium">${itemsText}</p>
-              <div class="flex items-center justify-between pt-1 border-t border-cafe-vanilla/40 text-[11px] text-cafe-mocha/70">
-                <span>👤 ${ord.customer.name || 'Customer'} (${ord.customer.phone || 'No phone'})</span>
-                <span>Mode: ${ord.paymentMode} (${ord.merchantVpa})</span>
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeClass}">
+                  ${ord.status}
+                </span>
+                <span class="font-serif font-bold text-base text-cafe-caramel">₹${ord.amount}/-</span>
               </div>
             </div>
-          `;
-        }).join('');
-
-      } catch (err) {
-        container.innerHTML = '<div class="text-center py-6 text-rose-600 text-xs">Failed to connect to Firebase database service.</div>';
-      }
+            <p class="text-xs text-cafe-darkRoast font-medium">${itemsText}</p>
+            <div class="flex items-center justify-between pt-1 border-t border-cafe-vanilla/40 text-[11px] text-cafe-mocha/70">
+              <span>👤 ${custName} (${custPhone})</span>
+              <span>Mode: ${ord.paymentMode || 'UPI'} (${ord.merchantVpa || 'k13592759@okhdfcbank'})</span>
+            </div>
+          </div>
+        `;
+      }).join('');
     }
 
     // Traditional WhatsApp Flow
@@ -4736,28 +4913,35 @@
       const subject = document.getElementById('contactSubject').value;
       const message = document.getElementById('contactMessage').value;
 
-      try {
-        await fetch('/api/v1/contact', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, phone, subject, message })
-        });
+      let saved = false;
 
-        if (firebaseDb) {
-          try {
-            firebaseDb.collection('inquiries').add({
-              name, phone, subject, message,
-              createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            });
-          } catch (fbErr) {}
+      // 1. Direct write to Firebase Firestore
+      if (firebaseDb) {
+        try {
+          await firebaseDb.collection('inquiries').add({
+            name, phone, subject, message,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+          saved = true;
+        } catch (fbErr) {
+          console.warn('Firestore inquiry save note:', fbErr);
         }
-
-        showToast("Thank you! Message saved to Firebase and sent to cafe owner.");
-        e.target.reset();
-      } catch (err) {
-        showToast("Thank you! Your message has been sent to the owner.");
-        e.target.reset();
       }
+
+      // 2. If running locally, notify Node.js server
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        try {
+          await fetch('/api/v1/contact', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, phone, subject, message })
+          });
+          saved = true;
+        } catch (err) {}
+      }
+
+      showToast(saved ? "Thank you! Message saved to Firebase and sent to cafe owner." : "Thank you! Your message has been sent to the owner.");
+      e.target.reset();
     }
 
     function toggleMobileMenu() {
